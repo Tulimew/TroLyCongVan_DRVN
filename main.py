@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QDate, QPointF
 from PyQt6.QtGui import QIcon, QColor, QFont, QAction, QPixmap, QImage
+from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 import pymupdf
 
 import db
@@ -3013,16 +3014,7 @@ class MainWindow(QMainWindow):
 
         msg = f"📌 Số đến: {so_den} | Số hiệu: {so_kh}\n⏳ Hạn xử lý: {han}\n📝 {trich_yeu}"
 
-        # 1. Thông báo qua khay hệ thống Windows
-        if hasattr(self, "tray_icon") and self.tray_icon.isVisible():
-            self.tray_icon.showMessage(
-                f"🔔 CÔNG VĂN MỚI: {so_den}",
-                f"{so_kh}\n{trich_yeu}",
-                QSystemTrayIcon.MessageIcon.Information,
-                10000
-            )
-
-        # 2. Cửa sổ thông báo nổi trực tiếp trên màn hình desktop
+        # Cửa sổ thông báo nổi thiết kế riêng của ứng dụng (rõ ràng, trực quan, không hiển thị biểu tượng/tên Python)
         self.toast = ToastNotification(title, msg, doc=doc, on_click=self.on_toast_clicked, is_outgoing=False)
         self.toast.show()
 
@@ -3046,14 +3038,7 @@ class MainWindow(QMainWindow):
 
         msg = f"📌 Số văn bản: {so_di}\n🚀 Trạng thái mới: {trang_thai}\n📝 {trich_yeu}"
 
-        if hasattr(self, "tray_icon") and self.tray_icon.isVisible():
-            self.tray_icon.showMessage(
-                f"📤 TRẠNG THÁI MỚI: {so_di}",
-                f"Trạng thái: {trang_thai}\n{trich_yeu}",
-                QSystemTrayIcon.MessageIcon.Information,
-                10000
-            )
-
+        # Cửa sổ thông báo nổi thiết kế riêng của ứng dụng
         self.toast = ToastNotification(title, msg, doc=doc, on_click=self.on_toast_clicked, is_outgoing=True)
         self.toast.show()
 
@@ -3433,22 +3418,80 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         event.ignore()
         self.hide()
-        if hasattr(self, "tray_icon") and self.tray_icon.isVisible():
-            self.tray_icon.showMessage(
-                "Trợ lý Công văn DRVN",
-                "Ứng dụng đã thu nhỏ xuống góc khay đồng hồ. Bấm vào biểu tượng để mở lại!",
-                QSystemTrayIcon.MessageIcon.Information,
-                2500
-            )
 
     def quit_app(self):
         QApplication.instance().quit()
 
 
+class SingleInstanceManager:
+    def __init__(self, server_name="TroLyCongVan_DRVN_SingleInstance_IPC"):
+        self.server_name = server_name
+        self.server = None
+        self.mutex = None
+        self.window = None
+
+    def is_another_instance_running(self):
+        """Kiểm tra tức thì (0ms) xem ứng dụng đã chạy hay chưa qua Windows Named Mutex"""
+        try:
+            self.mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Global\\TroLyCongVan_DRVN_App_Mutex")
+            if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+                # Đã có phiên bản đang chạy -> gửi tín hiệu IPC để phục hồi cửa sổ cũ lên trên cùng
+                try:
+                    sock = QLocalSocket()
+                    sock.connectToServer(self.server_name)
+                    if sock.waitForConnected(800):
+                        sock.write(b"ACTIVATE\n")
+                        sock.flush()
+                        sock.waitForBytesWritten(1000)
+                        sock.close()
+                except Exception:
+                    pass
+                return True
+        except Exception:
+            pass
+
+        # Đây là tiến trình duy nhất đầu tiên -> Khởi động ngay server IPC để lắng nghe
+        try:
+            QLocalServer.removeServer(self.server_name)
+        except Exception:
+            pass
+        self.server = QLocalServer()
+        self.server.newConnection.connect(self._handle_client)
+        self.server.listen(self.server_name)
+        return False
+
+    def register_window(self, window):
+        self.window = window
+
+    def _handle_client(self):
+        sock = self.server.nextPendingConnection()
+        if not sock:
+            return
+        def on_read():
+            try:
+                data = sock.readAll().data().decode("utf-8", errors="ignore")
+                if "ACTIVATE" in data and self.window:
+                    self.window.show_and_activate()
+            except Exception:
+                pass
+            sock.close()
+        sock.readyRead.connect(on_read)
+
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+
+    # 1. Cơ chế Single Instance: Chỉ cho phép duy nhất 1 phiên bản chạy cùng lúc
+    instance_mgr = SingleInstanceManager()
+    if instance_mgr.is_another_instance_running():
+        # Đã có phiên bản đang chạy -> kích hoạt cửa sổ cũ và thoát tiến trình mới ngay lập tức
+        sys.exit(0)
+
+    # 2. Khởi tạo cửa sổ chính và liên kết với trình quản lý IPC
     window = MainWindow()
+    instance_mgr.register_window(window)
+
     window.show()
     window.raise_()
     window.activateWindow()
