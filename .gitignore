@@ -1,0 +1,40 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Database and local personal data
+*.db
+*.sqlite3
+*.db-journal
+
+# Logs and debug outputs
+*.log
+py_err.log
+py_out.log
+error.log
+
+# Temporary scraped / debug HTML pages
+*.html
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Packaging & archives
+dist/
+build/
+*.egg-info/
+*.zip
+
+# Operating System files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE & Editors
+.vscode/
+.idea/

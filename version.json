@@ -1,0 +1,15 @@
+{
+  "version": "1.0.0",
+  "name": "Trợ lý Quản lý và Theo dõi Công văn DRVN",
+  "release_date": "2026-11-20",
+  "description": "Phiên bản phát hành chính thức v1.0.0 tích hợp Hệ thống quản lý công văn và Hệ thống theo dõi nhiệm vụ DRVN.",
+  "changelog": [
+    "Tích hợp Hệ thống theo dõi nhiệm vụ (nhiemvu.drvn.gov.vn) với 2 Tab: Tổng quan KPI Dashboard & Danh sách nhiệm vụ chi tiết",
+    "Giao diện phân vùng hiện đại: Sidebar dọc bên trái và các Tab nghiệp vụ chuyên biệt",
+    "Thông báo nhanh với huy hiệu phân loại trực quan (⚡ Phải xử lý, 👁️ Để biết & lưu, 📂 Lưu chung)",
+    "Bóc tách riêng biệt Chuyên viên xử lý chính và Chuyên viên phối hợp",
+    "Trình đọc văn bản PDF tích hợp hiển thị 100% chữ ký số, ngày ký và con dấu đỏ",
+    "Tích hợp chức năng Quản trị viên (Admin Console): Đóng gói 1-click & Quản lý đồng bộ Google Drive trực tiếp trong phần mềm"
+  ],
+  "download_url": ""
+}

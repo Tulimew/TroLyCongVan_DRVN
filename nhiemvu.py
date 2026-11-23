@@ -1,0 +1,135 @@
+import requests
+import json
+import urllib3
+import os
+import db
+
+urllib3.disable_warnings()
+
+SUPABASE_URL = "https://afapnpzmrgypyzvopaia.supabase.co"
+SUPABASE_ANON_KEY = "sb_publishable_0Ezj4VegqY5M4tf41qKKCA_hpaOJBzC"
+DASHBOARD_URL = "https://nhiemvu.drvn.gov.vn/dashboard"
+
+def login_nhiemvu(email, password):
+    """
+    Xác thực tài khoản với hệ thống theo dõi nhiệm vụ DRVN qua Supabase Auth API.
+    """
+    if not email or not password:
+        return False, "Vui lòng nhập Email và Mật khẩu Hệ thống theo dõi nhiệm vụ!"
+
+    url = f"{SUPABASE_URL}/auth/v1/token?grant_type=password"
+    headers = {
+        "apikey": SUPABASE_ANON_KEY,
+        "Content-Type": "application/json"
+    }
+    body = {
+        "email": email.strip(),
+        "password": password.strip()
+    }
+
+    try:
+        r = requests.post(url, headers=headers, json=body, timeout=12)
+        if r.status_code == 200:
+            data = r.json()
+            access_token = data.get("access_token", "")
+            user_info = data.get("user", {})
+            user_id = user_info.get("id", "")
+
+            # Lưu vào cài đặt
+            db.set_setting("nhiemvu_email", email.strip())
+            db.set_setting("nhiemvu_password", password.strip())
+            db.set_setting("nhiemvu_token", access_token)
+            db.set_setting("nhiemvu_user_id", user_id)
+            db.set_setting("nhiemvu_logged_in", "1")
+
+            return True, "Đăng nhập Hệ thống theo dõi nhiệm vụ thành công!"
+        else:
+            try:
+                err_data = r.json()
+                err_msg = err_data.get("msg") or err_data.get("error_description") or r.text
+            except Exception:
+                err_msg = r.text
+            if "Invalid login credentials" in err_msg:
+                err_msg = "Email hoặc Mật khẩu không chính xác."
+            return False, f"Đăng nhập thất bại: {err_msg}"
+    except Exception as e:
+        return False, f"Lỗi kết nối tới máy chủ nhiệm vụ: {str(e)}"
+
+def sync_tasks_from_remote():
+    """
+    Đồng bộ danh sách nhiệm vụ từ Supabase về SQLite nội bộ.
+    Nếu chưa đăng nhập hoặc lỗi, giữ nguyên dữ liệu hiện tại.
+    """
+    token = db.get_setting("nhiemvu_token", "")
+    if not token:
+        # Nếu đã có email và pass nhưng chưa có token, thử login tự động
+        email = db.get_setting("nhiemvu_email", "")
+        pwd = db.get_setting("nhiemvu_password", "")
+        if email and pwd:
+            ok, _ = login_nhiemvu(email, pwd)
+            if ok:
+                token = db.get_setting("nhiemvu_token", "")
+        if not token:
+            return False, "Chưa đăng nhập tài khoản Hệ thống nhiệm vụ. Vui lòng khai báo trong Cấu hình."
+
+    url = f"{SUPABASE_URL}/rest/v1/tasks?select=*"
+    headers = {
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": f"Bearer {token}"
+    }
+
+    try:
+        r = requests.get(url, headers=headers, timeout=15)
+        if r.status_code == 200:
+            tasks_list = r.json()
+            synced_count = 0
+            for item in tasks_list:
+                # Chuẩn hóa trường dữ liệu
+                task_id = str(item.get("id", ""))
+                task_code = item.get("code") or item.get("task_code") or f"NV-{task_id[:6]}"
+                title = item.get("title") or item.get("name") or "Nhiệm vụ chưa đặt tên"
+                source = item.get("source") or item.get("document_source") or "Văn bản chỉ đạo"
+                department = item.get("department") or item.get("department_name") or "Phòng ban chuyên môn"
+                assignee = item.get("assignee") or item.get("assignee_name") or "Chuyên viên xử lý"
+                coordinators = item.get("coordinators") or ""
+                priority = item.get("priority") or "binh_thuong"
+                status = item.get("status") or "dang_xu_ly"
+                start_date = item.get("start_date") or ""
+                due_date = item.get("due_date") or item.get("deadline") or ""
+                completed_date = item.get("completed_date") or ""
+                progress = int(item.get("progress") or 0)
+                report_content = item.get("report_content") or item.get("description") or ""
+                note = item.get("note") or ""
+
+                db.upsert_task({
+                    "id": task_id,
+                    "code": task_code,
+                    "title": title,
+                    "source": source,
+                    "department": department,
+                    "assignee": assignee,
+                    "coordinators": coordinators,
+                    "priority": priority,
+                    "status": status,
+                    "start_date": start_date,
+                    "due_date": due_date,
+                    "completed_date": completed_date,
+                    "progress": progress,
+                    "report_content": report_content,
+                    "note": note
+                })
+                synced_count += 1
+            return True, f"Đã đồng bộ thành công {synced_count} nhiệm vụ từ hệ thống trực tuyến!"
+        elif r.status_code == 401:
+            # Token hết hạn -> Thử đăng nhập lại
+            email = db.get_setting("nhiemvu_email", "")
+            pwd = db.get_setting("nhiemvu_password", "")
+            if email and pwd:
+                ok, _ = login_nhiemvu(email, pwd)
+                if ok:
+                    return sync_tasks_from_remote()
+            return False, "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại tài khoản nhiệm vụ."
+        else:
+            return False, f"Máy chủ nhiệm vụ phản hồi mã lỗi HTTP {r.status_code}."
+    except Exception as e:
+        return False, f"Lỗi đồng bộ trực tuyến: {str(e)}"
