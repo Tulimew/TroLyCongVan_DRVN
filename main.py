@@ -821,6 +821,10 @@ class MainWindow(QMainWindow):
         self.btn_pdf_fit_width.setToolTip("Tự động vừa chiều rộng màn hình")
         self.btn_pdf_fit_width.clicked.connect(self.action_pdf_fit_width)
 
+        self.btn_pdf_reload = QPushButton("🔄 Tải lại tệp")
+        self.btn_pdf_reload.setToolTip("Tải lại tệp đính kèm gốc từ cổng DRVN (làm mới bộ đệm)")
+        self.btn_pdf_reload.clicked.connect(self.action_pdf_force_reload)
+
         self.btn_pdf_open_browser = QPushButton("↗ Mở ngoài")
         self.btn_pdf_open_browser.setToolTip("Mở tệp này bằng ứng dụng hoặc trình duyệt bên ngoài")
         self.btn_pdf_open_browser.clicked.connect(self.action_pdf_open_external)
@@ -834,6 +838,7 @@ class MainWindow(QMainWindow):
         bar_layout.addWidget(self.lbl_pdf_zoom)
         bar_layout.addWidget(self.btn_pdf_zoom_in)
         bar_layout.addWidget(self.btn_pdf_fit_width)
+        bar_layout.addWidget(self.btn_pdf_reload)
         bar_layout.addWidget(self.btn_pdf_open_browser)
 
         layout_right.addWidget(pdf_bar)
@@ -1687,12 +1692,26 @@ class MainWindow(QMainWindow):
     # =========================================================================
     # VIEW 5: CẤU HÌNH
     # =========================================================================
+    # =========================================================================
+    # VIEW 5: CẤU HÌNH (ĐÃ BỌC SCROLLAREA ĐỂ KHÔNG BỊ TRÀN/LỖI HIỂN THỊ)
+    # =========================================================================
     def init_view_config(self):
-        layout = QVBoxLayout(self.view_config)
-        layout.setSpacing(12)
+        root = QVBoxLayout(self.view_config)
+        root.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+
+        container = QWidget()
+        container.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(14, 14, 14, 24)
+        layout.setSpacing(14)
 
         # 1. KHAI BÁO TÀI KHOẢN & ĐĂNG NHẬP
-        grp_auth = QGroupBox("1. KHAI BÁO TÀI KHOẢN & TRẠNG THÁI ĐĂNG NHẬP")
+        grp_auth = QGroupBox("1. KHAI BÁO TÀI KHOẢN & TRẠNG THÁI ĐĂNG NHẬP (congvan.drvn.gov.vn)")
         grp_auth.setStyleSheet("QGroupBox { font-weight: bold; color: #0284c7; }")
         form_auth = QFormLayout(grp_auth)
 
@@ -1733,10 +1752,15 @@ class MainWindow(QMainWindow):
         form_auth.addRow("", btn_login)
         layout.addWidget(grp_auth)
 
-        # 2. CẤU HÌNH THƯ MỤC LƯU NHANH
-        grp_folder = QGroupBox("2. CẤU HÌNH THƯ MỤC LƯU NHANH TỆP ĐÍNH KÈM")
-        grp_folder.setStyleSheet("QGroupBox { font-weight: bold; color: #16a34a; }")
-        form_folder = QFormLayout(grp_folder)
+        # 2. KHỞI ĐỘNG CÙNG WINDOWS & THƯ MỤC LƯU NHANH
+        grp_system = QGroupBox("2. KHỞI ĐỘNG CÙNG WINDOWS & THƯ MỤC TỆP ĐÍNH KÈM")
+        grp_system.setStyleSheet("QGroupBox { font-weight: bold; color: #16a34a; }")
+        form_system = QFormLayout(grp_system)
+
+        self.chk_autostart = QCheckBox("Tự động khởi động cùng Windows khi bật máy tính (chạy ngầm dưới khay đồng hồ)")
+        self.chk_autostart.setStyleSheet("font-size: 13px; font-weight: bold; color: #0284c7;")
+        self.chk_autostart.setChecked(self.is_autostart_enabled())
+        self.chk_autostart.setToolTip("Khi bật máy tính, Trợ lý Công văn sẽ tự động khởi động ẩn để luôn sẵn sàng theo dõi và cảnh báo công văn kịp thời.")
 
         default_fld = db.get_setting("save_folder", db.DEFAULT_SAVE_FOLDER)
         self.txt_save_folder = QLineEdit(default_fld)
@@ -1751,8 +1775,9 @@ class MainWindow(QMainWindow):
         fld_box.addWidget(btn_browse_fld)
         fld_box.addWidget(btn_open_fld)
 
-        form_folder.addRow("Thư mục lưu:", fld_box)
-        layout.addWidget(grp_folder)
+        form_system.addRow("Khởi động hệ thống:", self.chk_autostart)
+        form_system.addRow("Thư mục lưu tệp:", fld_box)
+        layout.addWidget(grp_system)
 
         # 3. CẤU HÌNH TÀI KHOẢN HỆ THỐNG THEO DÕI NHIỆM VỤ (nhiemvu.drvn.gov.vn)
         grp_nhiemvu = QGroupBox("3. CẤU HÌNH TÀI KHOẢN HỆ THỐNG THEO DÕI NHIỆM VỤ (nhiemvu.drvn.gov.vn)")
@@ -1879,6 +1904,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(grp_admin_unlock)
 
         layout.addStretch()
+        scroll.setWidget(container)
+        root.addWidget(scroll)
 
     # =========================================================================
     # VIEW 6: QUẢN TRỊ VIÊN (CHỈ HIỂN THỊ KHI ĐĂNG NHẬP VỚI TÀI KHOẢN ADMIN)
@@ -2650,7 +2677,12 @@ class MainWindow(QMainWindow):
                 self.btn_attach_save.setEnabled(True)
                 self.load_attachment_into_reader(att)
 
-    def load_attachment_into_reader(self, attach):
+    def action_pdf_force_reload(self):
+        """Buộc tải lại tệp đính kèm gốc từ máy chủ DRVN (xóa đệm và làm mới)"""
+        if hasattr(self, "current_reading_attach") and self.current_reading_attach:
+            self.load_attachment_into_reader(self.current_reading_attach, force_reload=True)
+
+    def load_attachment_into_reader(self, attach, force_reload=False):
         self.current_reading_attach = attach
         raw_name = attach.get("name", "van_ban.pdf")
         self.lbl_pdf_title.setText(f"📖 {raw_name}")
@@ -2661,14 +2693,25 @@ class MainWindow(QMainWindow):
             return
 
         doc = getattr(self, "selected_doc_for_detail", {}) or {}
-        so_den = str(doc.get("so_den", "CV"))
-        safe_file_name = re.sub(r'[\\/*?:"<>|]', '_', f"CV_{so_den}_{raw_name}")
+        so_den = str(doc.get("so_den") or doc.get("so_di") or doc.get("id") or "CV")
+        clean_so_den = re.sub(r'[\\/*?:"<>|]', '_', so_den)
+        clean_raw_name = re.sub(r'[\\/*?:"<>|]', '_', raw_name)
+
+        # Trích xuất GUID tệp duy nhất từ link (đảm bảo 100% không bị trùng file giữa các công văn)
+        url_match = re.search(r'/(?:id|itemid)/([a-zA-Z0-9\-]+)', url)
+        att_id = url_match.group(1)[:12] if url_match else "att"
+        safe_file_name = f"DRVN_{clean_so_den}_{att_id}_{clean_raw_name}"
         temp_dir = tempfile.gettempdir()
         dest = os.path.join(temp_dir, safe_file_name)
 
-        # Mở tức thì nếu file đã được tải trước đó
-        if not (os.path.exists(dest) and os.path.getsize(dest) > 0):
-            self.status_bar.showMessage(f"Đang tải {raw_name} để xem nhanh...")
+        # Mở tức thì nếu file đã được tải trước đó và không yêu cầu tải lại
+        if force_reload or not (os.path.exists(dest) and os.path.getsize(dest) > 0):
+            if os.path.exists(dest):
+                try:
+                    os.remove(dest)
+                except Exception:
+                    pass
+            self.status_bar.showMessage(f"Đang tải {raw_name} từ cổng DRVN...")
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
             try:
                 ok, err = self.crawler.download_file(url, dest)
@@ -3057,6 +3100,52 @@ class MainWindow(QMainWindow):
             if doc:
                 self.display_doc_detail(doc)
 
+    def is_autostart_enabled(self):
+        """Kiểm tra xem ứng dụng đã được đăng ký khởi động cùng Windows hay chưa"""
+        try:
+            startup_dir = os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs\Startup")
+            lnk_path = os.path.join(startup_dir, "TroLyCongVan_DRVN.lnk")
+            return os.path.exists(lnk_path)
+        except Exception:
+            return False
+
+    def set_autostart_enabled(self, enable=True):
+        """Bật/tắt tự động khởi động cùng Windows thông qua thư mục Startup"""
+        try:
+            startup_dir = os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs\Startup")
+            lnk_path = os.path.join(startup_dir, "TroLyCongVan_DRVN.lnk")
+            if enable:
+                app_dir = os.path.dirname(os.path.abspath(__file__))
+                bat_path = os.path.join(app_dir, "Chay_Tro_Ly_Cong_Van.bat")
+                ico_path = os.path.join(app_dir, "icon.ico")
+                vbs_code = (
+                    f'Set ws = CreateObject("WScript.Shell")\n'
+                    f'Set s = ws.CreateShortcut("{lnk_path}")\n'
+                    f's.TargetPath = "{bat_path}"\n'
+                    f's.WorkingDirectory = "{app_dir}"\n'
+                    f's.IconLocation = "{ico_path}"\n'
+                    f's.Save\n'
+                )
+                vbs_tmp = os.path.join(tempfile.gettempdir(), "_create_lnk.vbs")
+                with open(vbs_tmp, "w", encoding="utf-8") as f:
+                    f.write(vbs_code)
+                subprocess.run(["wscript.exe", vbs_tmp], capture_output=True)
+                if os.path.exists(vbs_tmp):
+                    try:
+                        os.remove(vbs_tmp)
+                    except Exception:
+                        pass
+                return os.path.exists(lnk_path)
+            else:
+                if os.path.exists(lnk_path):
+                    try:
+                        os.remove(lnk_path)
+                    except Exception:
+                        pass
+                return not os.path.exists(lnk_path)
+        except Exception:
+            return False
+
     def action_save_all_config(self):
         db.set_setting("save_folder", self.txt_save_folder.text().strip())
         db.set_setting("interval_min", str(self.spin_interval.value()))
@@ -3077,12 +3166,21 @@ class MainWindow(QMainWindow):
         if hasattr(self, "txt_nhiemvu_password"):
             db.set_setting("nhiemvu_password", self.txt_nhiemvu_password.text().strip())
 
+        # Cập nhật cấu hình khởi động cùng Windows
+        autostart_msg = ""
+        if hasattr(self, "chk_autostart"):
+            want_autostart = self.chk_autostart.isChecked()
+            self.set_autostart_enabled(want_autostart)
+            db.set_setting("autostart", "1" if want_autostart else "0")
+            autostart_msg = f"• Khởi động cùng Windows: {'BẬT (Tự chạy ẩn khi mở máy)' if want_autostart else 'TẮT'}\n"
+
         self.timer.setInterval(self.spin_interval.value() * 60 * 1000)
         db.recalculate_urgency()
         self.refresh_all_data()
         QMessageBox.information(
             self, "Thành công",
             f"✅ Đã lưu toàn bộ cấu hình hệ thống!\n\n"
+            f"{autostart_msg}"
             f"• Cảnh báo sắp quá hạn: ≤ {self.spin_warning_days.value()} ngày\n"
             f"• Tần suất quét ngầm: {self.spin_interval.value()} phút\n"
             f"• Thư mục lưu file: {self.txt_save_folder.text().strip()}"
