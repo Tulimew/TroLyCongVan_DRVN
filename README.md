@@ -146,6 +146,30 @@ Không mang theo thông tin đăng nhập khi sao chép ứng dụng sang máy h
 
 ## Phát hành gói cập nhật đã ký
 
+### Tạo bản cập nhật trên GitHub
+
+1. Chuẩn bị nhánh hoặc commit GitHub chứa mã nguồn và số phiên bản mới trong `version.json`.
+2. Mở `Quan_Tri_Cap_Nhat.bat`, chọn mục **Tạo bản cập nhật và tải lên GitHub Release nháp**.
+   Công cụ dùng khóa ký trong Windows Credential Manager. Lần đầu có thể khởi tạo khóa ký
+   trên máy phát hành và nhập token GitHub chỉ dành cho repository này với quyền
+   **Contents: Read and write**. Có thể dùng biến môi trường `GH_TOKEN` hoặc chọn lưu token
+   vào Windows Credential Manager cho những lần sau.
+3. Mở liên kết do công cụ trả về để duyệt và bấm **Publish release** trên GitHub. Công cụ
+   đối chiếu SHA-256 của cả ZIP và `version.json` trên bản nháp. Nếu tải giữa chừng bị lỗi,
+   chạy lại cùng nhánh hoặc commit để tải phần còn thiếu. Tệp trùng tên chỉ được dùng lại
+   khi nội dung khớp.
+
+Ví dụ chạy từ dòng lệnh trên máy phát hành:
+
+```powershell
+.\Quan_Tri_Cap_Nhat.bat --create-draft --ref main --version 1.1.4 --open
+```
+
+Máy nhận cập nhật cần khóa công khai tin cậy do người phát hành cấp và có thể dùng URL
+`https://github.com/Tulimew/TroLyCongVan_DRVN/releases/latest/download/version.json`.
+
+### Đóng gói thủ công
+
 1. Trên máy Windows dùng để phát hành, chạy `python admin_update_tool.py --init-signing-key`.
    Khóa riêng được lưu trong Windows Credential Manager. Tệp `update_public_key.pub`
    chứa khóa công khai. Xác nhận khóa công khai qua kênh quản trị tin cậy rồi đặt tệp

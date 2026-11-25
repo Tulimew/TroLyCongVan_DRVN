@@ -1,9 +1,9 @@
 @echo off
 chcp 65001 >nul
-title DRVN - Cong Cu Quan Tri Cap Nhat Google Drive
+title DRVN - Tao Ban Cap Nhat
 cls
 echo ======================================================================
-echo    CONG CU QUAN TRI VIEN - DONG GOI VA CAP NHAT TAI GOOGLE DRIVE
+echo    CONG CU QUAN TRI VIEN - DONG GOI VA TAO BAN CAP NHAT
 echo ======================================================================
 set "PY_CMD=python"
 if exist "%~dp0runtime\python.exe" set "PY_CMD=%~dp0runtime\python.exe"
@@ -14,4 +14,6 @@ if errorlevel 1 (
     exit /b
 )
 "%PY_CMD%" "%~dp0admin_update_tool.py" %*
+set "DRVN_RELEASE_EXIT=%ERRORLEVEL%"
 pause
+exit /b %DRVN_RELEASE_EXIT%
