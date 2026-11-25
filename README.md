@@ -1,6 +1,6 @@
 ================================================================================
    HỆ THỐNG TRỢ LÝ QUẢN LÝ VÀ THEO DÕI CÔNG VĂN - CỤC ĐƯỜNG BỘ VIỆT NAM (DRVN)
-                 PHIÊN BẢN SẠCH v1.0.0 (DÀNH CHO TRIỂN KHAI MÁY MỚI)
+                 PHIÊN BẢN CHÍNH THỨC v1.0.1 (BẢO MẬT & ĐÃ TỐI ƯU HÓA)
 ================================================================================
 
 1. TỔNG QUAN TÍNH NĂNG ĐÃ TRIỂN KHAI

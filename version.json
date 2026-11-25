@@ -1,15 +1,14 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Trợ lý Quản lý và Theo dõi Công văn DRVN",
-  "release_date": "2026-11-20",
-  "description": "Phiên bản phát hành chính thức v1.0.0 tích hợp Hệ thống quản lý công văn và Hệ thống theo dõi nhiệm vụ DRVN.",
+  "release_date": "2026-11-25",
+  "description": "Phiên bản v1.0.1 nâng cao bảo mật, loại bỏ hardcoded paths, tích hợp test suite và CI/CD.",
   "changelog": [
-    "Tích hợp Hệ thống theo dõi nhiệm vụ (nhiemvu.drvn.gov.vn) với 2 Tab: Tổng quan KPI Dashboard & Danh sách nhiệm vụ chi tiết",
-    "Giao diện phân vùng hiện đại: Sidebar dọc bên trái và các Tab nghiệp vụ chuyên biệt",
-    "Thông báo nhanh với huy hiệu phân loại trực quan (⚡ Phải xử lý, 👁️ Để biết & lưu, 📂 Lưu chung)",
-    "Bóc tách riêng biệt Chuyên viên xử lý chính và Chuyên viên phối hợp",
-    "Trình đọc văn bản PDF tích hợp hiển thị 100% chữ ký số, ngày ký và con dấu đỏ",
-    "Tích hợp chức năng Quản trị viên (Admin Console): Đóng gói 1-click & Quản lý đồng bộ Google Drive trực tiếp trong phần mềm"
+    "Bảo mật: Loại bỏ hoàn toàn hardcoded credentials khỏi source code, chuyển sang biến môi trường và .env",
+    "Đường dẫn: Chuyển đổi 100% đường dẫn tuyệt đối sang tương đối động (%~dp0, os.path.dirname)",
+    "Logging: Tích hợp mô-đun logging có cấu trúc logger.py với cơ chế RotatingFileHandler",
+    "Kiểm thử: Bổ sung bộ Unit Test đầy đủ trong tests/ và runner run_tests.py",
+    "CI/CD: Tích hợp GitHub Actions workflow tự động kiểm tra mã nguồn"
   ],
   "download_url": ""
 }

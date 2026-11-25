@@ -8,7 +8,7 @@ import subprocess
 import re
 import requests
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 
 def parse_version_tuple(ver_str):
     """Chuyển đổi chuỗi version (ví dụ: '1.0.1' hoặc 'v1.0.1') thành tuple số để so sánh chính xác"""
