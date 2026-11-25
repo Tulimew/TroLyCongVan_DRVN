@@ -6,8 +6,31 @@ import db
 
 urllib3.disable_warnings()
 
-SUPABASE_URL = "https://afapnpzmrgypyzvopaia.supabase.co"
-SUPABASE_ANON_KEY = "sb_publishable_0Ezj4VegqY5M4tf41qKKCA_hpaOJBzC"
+def _load_env_file():
+    """Tự động nạp cấu hình từ tệp .env nếu tồn tại mà không phụ thuộc thư viện ngoài"""
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip().strip("'\"")
+                        if k not in os.environ:
+                            os.environ[k] = v
+        except Exception:
+            pass
+
+_load_env_file()
+
+def get_supabase_config():
+    """Lấy địa chỉ máy chủ và khóa truy cập Supabase từ biến môi trường hoặc cấu hình CSDL"""
+    url = os.getenv("SUPABASE_URL") or db.get_setting("supabase_url", "https://afapnpzmrgypyzvopaia.supabase.co")
+    key = os.getenv("SUPABASE_ANON_KEY") or db.get_setting("supabase_anon_key", "")
+    return url.strip(), key.strip()
+
 DASHBOARD_URL = "https://nhiemvu.drvn.gov.vn/dashboard"
 
 def login_nhiemvu(email, password):
@@ -17,9 +40,13 @@ def login_nhiemvu(email, password):
     if not email or not password:
         return False, "Vui lòng nhập Email và Mật khẩu Hệ thống theo dõi nhiệm vụ!"
 
-    url = f"{SUPABASE_URL}/auth/v1/token?grant_type=password"
+    supabase_url, supabase_key = get_supabase_config()
+    if not supabase_key:
+        return False, "Chưa thiết lập khóa API Supabase. Vui lòng cấu hình file .env hoặc biến môi trường."
+
+    url = f"{supabase_url}/auth/v1/token?grant_type=password"
     headers = {
-        "apikey": SUPABASE_ANON_KEY,
+        "apikey": supabase_key,
         "Content-Type": "application/json"
     }
     body = {
@@ -72,9 +99,13 @@ def sync_tasks_from_remote():
         if not token:
             return False, "Chưa đăng nhập tài khoản Hệ thống nhiệm vụ. Vui lòng khai báo trong Cấu hình."
 
-    url = f"{SUPABASE_URL}/rest/v1/tasks?select=*"
+    supabase_url, supabase_key = get_supabase_config()
+    if not supabase_key:
+        return False, "Chưa thiết lập khóa API Supabase. Vui lòng cấu hình file .env hoặc biến môi trường."
+
+    url = f"{supabase_url}/rest/v1/tasks?select=*"
     headers = {
-        "apikey": SUPABASE_ANON_KEY,
+        "apikey": supabase_key,
         "Authorization": f"Bearer {token}"
     }
 

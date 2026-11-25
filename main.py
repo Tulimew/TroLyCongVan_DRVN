@@ -32,6 +32,7 @@ from crawler import DRVNCrawler
 import notifier
 import updater
 import nhiemvu
+from logger import log
 
 # Bắt lỗi toàn cục để đảm bảo phần mềm không bao giờ bị văng/thoát đột ngột
 def handle_global_exception(exc_type, exc_value, exc_traceback):
@@ -40,13 +41,14 @@ def handle_global_exception(exc_type, exc_value, exc_traceback):
         return
     err_str = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
     try:
+        log.critical("Lỗi nghiêm trọng chưa được xử lý:\n%s", err_str)
         log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "error.log")
         with open(log_file, "a", encoding="utf-8") as f:
             f.write(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ERROR:\n{err_str}\n")
     except Exception:
         pass
     if QApplication.instance():
-        QMessageBox.critical(None, "Thông báo lỗi", f"Đã xảy ra lỗi:\n{exc_value}\n\n(Chi tiết đã được ghi vào error.log)")
+        QMessageBox.critical(None, "Thông báo lỗi", f"Đã xảy ra lỗi:\n{exc_value}\n\n(Chi tiết đã được ghi vào app.log và error.log)")
 
 sys.excepthook = handle_global_exception
 
@@ -3585,6 +3587,8 @@ if __name__ == "__main__":
     if instance_mgr.is_another_instance_running():
         # Đã có phiên bản đang chạy -> kích hoạt cửa sổ cũ và thoát tiến trình mới ngay lập tức
         sys.exit(0)
+
+    log.info("Khởi động Trợ lý Công văn DRVN...")
 
     # 2. Khởi tạo cửa sổ chính và liên kết với trình quản lý IPC
     window = MainWindow()

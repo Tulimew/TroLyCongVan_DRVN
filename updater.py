@@ -280,7 +280,7 @@ def update_version_manifest(new_ver=None, changelog_list=None, download_url=None
     with open(v_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
         
-    rel_dir = r"C:\Users\tangt\Downloads\TroLyCongVan_DRVN_Release"
+    rel_dir = os.path.join(os.path.expanduser("~"), "Downloads", "TroLyCongVan_DRVN_Release")
     if os.path.exists(rel_dir):
         try:
             with open(os.path.join(rel_dir, "version.json"), "w", encoding="utf-8") as f:

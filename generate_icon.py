@@ -1,3 +1,4 @@
+import os
 from PIL import Image, ImageDraw
 
 def create_icon():
@@ -17,8 +18,10 @@ def create_icon():
     # Chấm đỏ thông báo nhỏ ở góc
     draw.ellipse((42, 6, 58, 22), fill=(239, 68, 68, 255), outline=(255, 255, 255, 255), width=2)
     
-    img.save("C:\\Users\\tangt\\.gemini\\antigravity\\scratch\\drvn-app\\icon.png", "PNG")
-    print("Created icon.png successfully!")
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    out_path = os.path.join(current_dir, "icon.png")
+    img.save(out_path, "PNG")
+    print(f"Created icon.png successfully at {out_path}!")
 
 if __name__ == "__main__":
     create_icon()
