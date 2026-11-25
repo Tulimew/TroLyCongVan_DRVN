@@ -1,11 +1,9 @@
 import requests
 import json
-import urllib3
 import os
 from datetime import datetime, timedelta
+from urllib.parse import urlsplit
 from core import db
-
-urllib3.disable_warnings()
 
 
 def _load_env_file():
@@ -158,6 +156,8 @@ def login_nhiemvu(email, password):
         return False, "Chưa thiết lập khóa API Supabase. Vui lòng cấu hình file .env hoặc biến môi trường."
 
     url = f"{supabase_url}/auth/v1/token?grant_type=password"
+    if urlsplit(url).scheme != "https":
+        return False, "Máy chủ xác thực nhiệm vụ yêu cầu HTTPS."
     headers = {
         "apikey": supabase_key,
         "Content-Type": "application/json"
@@ -168,7 +168,7 @@ def login_nhiemvu(email, password):
     }
 
     try:
-        r = requests.post(url, headers=headers, json=body, timeout=12)
+        r = requests.post(url, headers=headers, json=body, timeout=12, allow_redirects=False)
         if r.status_code == 200:
             data = r.json()
             access_token = data.get("access_token", "")
@@ -200,6 +200,8 @@ def sync_tasks_from_remote(_retried=False):
     Đồng bộ toàn bộ danh sách nhiệm vụ từ Backend API của nhiemvu.drvn.gov.vn về SQLite nội bộ.
     Nếu chưa đăng nhập hoặc lỗi, giữ nguyên dữ liệu hiện tại.
     """
+    if urlsplit(API_BASE_URL).scheme != "https":
+        return False, "Máy chủ nhiệm vụ yêu cầu HTTPS."
     token = db.get_setting("nhiemvu_token", "")
     if not token:
         email = db.get_setting("nhiemvu_email", "")
@@ -222,7 +224,7 @@ def sync_tasks_from_remote(_retried=False):
         total_pages = 1
         while page <= total_pages:
             url = f"{API_BASE_URL}/tasks?page={page}&limit=100"
-            r = requests.get(url, headers=headers, timeout=30)
+            r = requests.get(url, headers=headers, timeout=30, allow_redirects=False)
             if r.status_code == 401 and not _retried:
                 email = db.get_setting("nhiemvu_email", "")
                 pwd = db.get_setting("nhiemvu_password", "")

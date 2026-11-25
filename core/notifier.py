@@ -21,10 +21,11 @@ def send_telegram_alert(text):
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     try:
-        requests.post(url, json={
+        response = requests.post(url, json={
             "chat_id": chat_id,
             "text": text,
             "parse_mode": "Markdown"
-        }, timeout=10)
-    except Exception as e:
-        print("[Notifier] Lỗi gửi Telegram:", e)
+        }, timeout=10, allow_redirects=False)
+        response.raise_for_status()
+    except requests.RequestException:
+        print("[Notifier] Không gửi được thông báo Telegram.")

@@ -172,7 +172,7 @@ class AdminViewMixin:
             self.lbl_adm_cur_ver.setText(f"v{updater.APP_VERSION}")
         if hasattr(self, "txt_admin_manifest_url"):
             self.txt_admin_manifest_url.setText(db.get_setting("update_url", ""))
-        v_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "version.json")
+        v_path = updater.release_manifest_path()
         if os.path.exists(v_path):
             try:
                 import json
@@ -218,8 +218,8 @@ class AdminViewMixin:
             msg = (
                 f"🎉 ĐÃ ĐÓNG GÓI THÀNH CÔNG BẢN PHÁT HÀNH v{new_ver}!\n\n"
                 f"• Vị trí file: {zip_path}\n"
-                f"• Dung lượng siêu nhẹ: {size_kb:.1f} KB\n"
-                f"• Đảm bảo sạch 100%: Đã loại trừ toàn bộ dữ liệu cá nhân, log và database.\n\n"
+                f"• Dung lượng: {size_kb:.1f} KB\n"
+                f"• Tệp thông tin phát hành có chữ ký: {res['manifest_path']}\n\n"
                 f"Bạn có muốn MỞ NGAY file ZIP trên Desktop và Google Drive trên trình duyệt để tải lên không?"
             )
             reply = QMessageBox.question(self, "Đóng gói thành công", msg, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
@@ -252,7 +252,11 @@ class AdminViewMixin:
             QMessageBox.warning(self, "Cảnh báo Google Drive", f"⚠️ Kiểm tra kết nối phát hiện sự cố:\n\n{msg}\n\nBạn hãy đảm bảo file ZIP đã được bật quyền 'Bất kỳ ai có đường liên kết'.")
             return
 
-        updater.update_version_manifest(download_url=direct_url)
+        try:
+            updater.update_version_manifest(download_url=direct_url)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, "Chưa lưu được liên kết", str(error))
+            return
         self.txt_admin_zip_url.setText(direct_url)
         QMessageBox.information(
             self, "Cập nhật thành công",

@@ -1,12 +1,12 @@
 {
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "Trợ lý Quản lý và Theo dõi Công văn DRVN",
   "release_date": "2026-11-25",
-  "description": "Phiên bản v1.1.0 tái cấu trúc mã nguồn theo kiến trúc module hóa (core/ và ui/), dễ bảo trì và mở rộng.",
+  "description": "Bản cập nhật bảo mật kết nối, thông tin đăng nhập và quy trình phát hành.",
   "changelog": [
-    "Kiến trúc: Tách main.py (~3.600 dòng) thành các gói module rõ ràng: core/ (db, crawler, nhiemvu, notifier, updater) và ui/ (main_window, views/, widgets/)",
-    "Ổn định: Bảo toàn 100% tính năng hiện có (Single Instance, PDF Viewer, Toast Notification, System Tray, Tự động khởi động cùng Windows)",
-    "Kiểm thử: Toàn bộ 9/9 Unit Tests và GUI smoke test đều vượt qua"
+    "Xác minh chứng chỉ HTTPS khi kết nối cổng công văn.",
+    "Di chuyển thông tin xác thực từ SQLite sang Windows Credential Manager.",
+    "Xác minh chữ ký Ed25519 của gói cập nhật và khôi phục tệp cũ khi cài đặt lỗi."
   ],
   "download_url": ""
 }

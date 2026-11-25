@@ -9,6 +9,7 @@ localAppData = WshShell.ExpandEnvironmentStrings("%LOCALAPPDATA%")
 ' Kiem tra cac thu muc cai dat Python pho bien tren Windows
 Dim candidatePaths
 candidatePaths = Array(_
+    scriptDir & "\runtime\pythonw.exe", _
     localAppData & "\Programs\Python\Python312\pythonw.exe", _
     localAppData & "\Programs\Python\Python311\pythonw.exe", _
     localAppData & "\Programs\Python\Python310\pythonw.exe", _
