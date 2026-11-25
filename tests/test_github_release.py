@@ -1,6 +1,9 @@
 import hashlib
 import io
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -144,3 +147,11 @@ class GitHubReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "không khớp"):
             self.create()
         self.assertFalse(any(method == "POST" for method, _ in self.server.requests))
+
+    def test_installed_command_uses_utf8_when_output_is_redirected(self):
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [sys.executable, "-B", "admin_update_tool.py", "--create-draft", "--help"],
+            cwd=root, env={**os.environ, "PYTHONIOENCODING": "cp1252"}, capture_output=True, check=True,
+        )
+        self.assertIn("Tạo bản cập nhật", result.stdout.decode("utf-8"))
