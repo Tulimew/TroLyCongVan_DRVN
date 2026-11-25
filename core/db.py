@@ -1,5 +1,7 @@
 import sqlite3
+from collections import Counter
 from contextlib import closing
+from unicodedata import normalize
 import os
 import re
 import json
@@ -801,15 +803,23 @@ def upsert_task(task):
     conn.commit()
     conn.close()
 
+def _task_department_key(name):
+    return " ".join(normalize("NFKC", name or "").casefold().split())
+
+
+def _task_department_filter(conn, department):
+    conn.create_function("task_department_key", 1, _task_department_key, deterministic=True)
+    name = _task_department_key(department)
+    if not name:
+        return "", []
+    return " AND task_department_key(department) = ?", [name]
+
+
 def get_tasks_filtered(department=None, status=None, priority=None, keyword=None):
     conn = get_connection()
     cursor = conn.cursor()
-    query = "SELECT * FROM drvn_tasks WHERE 1=1"
-    params = []
-
-    if department and department != "Tất cả đơn vị":
-        query += " AND department = ?"
-        params.append(department)
+    condition, params = _task_department_filter(conn, department)
+    query = "SELECT * FROM drvn_tasks WHERE 1=1" + condition
 
     if status and status != "Tất cả trạng thái":
         status_map = {
@@ -844,57 +854,45 @@ def get_tasks_filtered(department=None, status=None, priority=None, keyword=None
     conn.close()
     return rows
 
-def get_task_stats():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM drvn_tasks")
-    total = cursor.fetchone()[0]
+def get_task_stats(department=None):
+    with closing(get_connection()) as conn:
+        condition, params = _task_department_filter(conn, department)
+        rows = conn.execute("SELECT status, due_date FROM drvn_tasks WHERE 1=1" + condition, params).fetchall()
 
-    cursor.execute("SELECT COUNT(*) FROM drvn_tasks WHERE status = 'dang_xu_ly'")
-    in_progress = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM drvn_tasks WHERE status = 'hoan_thanh'")
-    completed = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM drvn_tasks WHERE status = 'qua_han'")
-    overdue = cursor.fetchone()[0]
-
-    # Sắp đến hạn: Hạn trong vòng 3 ngày tới và đang xử lý
+    counts = Counter(row["status"] for row in rows)
     today = date.today()
-    cursor.execute("SELECT due_date FROM drvn_tasks WHERE status = 'dang_xu_ly'")
     near_due = 0
-    for row in cursor.fetchall():
-        d_str = row[0]
-        d = parse_date_vietnam(d_str)
-        if d:
-            delta = (d - today).days
-            if 0 <= delta <= 3:
-                near_due += 1
+    for row in rows:
+        if row["status"] == "dang_xu_ly" and (due := parse_date_vietnam(row["due_date"])):
+            near_due += 0 <= (due - today).days <= 3
 
-    conn.close()
-    rate = int((completed / total * 100) if total > 0 else 0)
+    total = len(rows)
+    completed = counts["hoan_thanh"]
     return {
         "total": total,
-        "in_progress": in_progress,
+        "in_progress": counts["dang_xu_ly"],
         "completed": completed,
-        "overdue": overdue,
+        "overdue": counts["qua_han"],
         "near_due": near_due,
-        "completion_rate": rate
+        "completion_rate": int(completed / total * 100) if total else 0,
     }
 
-def get_tasks_by_department():
+
+def get_tasks_by_department(department=None):
     conn = get_connection()
+    condition, params = _task_department_filter(conn, department)
     cursor = conn.cursor()
-    cursor.execute("""
-    SELECT department,
+    cursor.execute(f"""
+    SELECT MIN(TRIM(department)) AS department,
            COUNT(*) as total,
            SUM(CASE WHEN status = 'dang_xu_ly' THEN 1 ELSE 0 END) as in_progress,
            SUM(CASE WHEN status = 'hoan_thanh' THEN 1 ELSE 0 END) as completed,
            SUM(CASE WHEN status = 'qua_han' THEN 1 ELSE 0 END) as overdue
     FROM drvn_tasks
-    GROUP BY department
-    ORDER BY total DESC
-    """)
+    WHERE 1=1 {condition}
+    GROUP BY task_department_key(department)
+    ORDER BY total DESC, department
+    """, params)
     rows = [dict(r) for r in cursor.fetchall()]
     conn.close()
     return rows

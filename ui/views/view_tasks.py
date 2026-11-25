@@ -66,6 +66,16 @@ class TasksViewMixin:
         hdr_layout.addWidget(btn_sync)
         layout.addWidget(header_frame)
 
+        scope_layout = QHBoxLayout()
+        self.chk_task_department = QCheckBox("Chỉ xem phòng của tôi")
+        self.chk_task_department.setChecked(bool(db.get_setting("task_department")))
+        self.lbl_task_department_scope = QLabel()
+        self.lbl_task_department_scope.setTextFormat(Qt.TextFormat.PlainText)
+        self.lbl_task_department_scope.setWordWrap(True)
+        scope_layout.addWidget(self.chk_task_department)
+        scope_layout.addWidget(self.lbl_task_department_scope, 1)
+        layout.addLayout(scope_layout)
+
         # 2 Main Tabs: Tổng quan & Nhiệm vụ
         self.tabs_tasks = QTabWidget()
         self.tabs_tasks.setStyleSheet("""
@@ -101,6 +111,7 @@ class TasksViewMixin:
         self.tabs_tasks.addTab(self.tab_task_list, "📋 Danh sách nhiệm vụ")
 
         layout.addWidget(self.tabs_tasks)
+        self.chk_task_department.toggled.connect(self.refresh_tasks_view)
 
     def init_tab_task_overview(self):
         layout = QVBoxLayout(self.tab_task_overview)
@@ -111,7 +122,7 @@ class TasksViewMixin:
         cards_layout = QHBoxLayout()
         cards_layout.setSpacing(10)
 
-        self.card_total = self.create_stat_card("📌 TỔNG NHIỆM VỤ", "0", "Toàn Cục Đường bộ VN", "#0284c7", "#38bdf8")
+        self.card_total = self.create_stat_card("📌 TỔNG NHIỆM VỤ", "0", "Trong phạm vi đã chọn", "#0284c7", "#38bdf8")
         self.card_inprogress = self.create_stat_card("⏳ ĐANG THỰC HIỆN", "0", "Trong hạn giải quyết", "#3b82f6", "#60a5fa")
         self.card_completed = self.create_stat_card("✅ ĐÃ HOÀN THÀNH", "0", "Đúng và trước hạn", "#10b981", "#34d399")
         self.card_overdue = self.create_stat_card("🚨 QUÁ HẠN XỬ LÝ", "0", "Cần đôn đốc khẩn", "#ef4444", "#f87171")
@@ -128,7 +139,7 @@ class TasksViewMixin:
         prog_box = QFrame()
         prog_box.setStyleSheet("background: #1e293b; border-radius: 8px; padding: 10px 14px; border: 1px solid #334155;")
         prog_layout = QHBoxLayout(prog_box)
-        self.lbl_task_rate_title = QLabel("TỶ LỆ HOÀN THÀNH NHIỆM VỤ TOÀN CỤC: 0%")
+        self.lbl_task_rate_title = QLabel("TỶ LỆ HOÀN THÀNH: 0%")
         self.lbl_task_rate_title.setStyleSheet("color: #e2e8f0; font-weight: bold; font-size: 13px; min-width: 320px;")
 
         self.progress_tasks = QProgressBar()
@@ -250,15 +261,7 @@ class TasksViewMixin:
         self.txt_task_search.textChanged.connect(self.apply_tasks_filter)
 
         self.cbo_task_dept = QComboBox()
-        self.cbo_task_dept.addItems([
-            "Tất cả đơn vị",
-            "Phòng Quản lý vận tải",
-            "Phòng Kế hoạch - Đầu tư",
-            "Phòng Quản lý bảo trì kết cấu hạ tầng",
-            "Phòng Pháp chế - Thanh tra",
-            "Phòng KHCN, Môi trường và HTQT",
-            "Văn phòng Cục"
-        ])
+        self.cbo_task_dept.addItem("Tất cả đơn vị")
         self.cbo_task_dept.currentIndexChanged.connect(self.apply_tasks_filter)
 
         self.cbo_task_status = QComboBox()
@@ -372,7 +375,19 @@ class TasksViewMixin:
     def refresh_tasks_view(self):
         """Làm mới toàn bộ dữ liệu giao diện Hệ thống theo dõi nhiệm vụ"""
         try:
-            stats = db.get_task_stats()
+            configured = db.get_setting("task_department").strip()
+            department = configured if configured and self.chk_task_department.isChecked() else None
+            stats = db.get_task_stats(department)
+            self.chk_task_department.setEnabled(bool(configured))
+            self.cbo_task_dept.setVisible(department is None)
+            scope = department or "Tất cả đơn vị"
+            if not configured:
+                message = "Khai báo Tên phòng trong Cấu hình để lọc riêng nhiệm vụ của phòng."
+            elif department and not stats["total"]:
+                message = f"{department} · Chưa có nhiệm vụ khớp tên phòng trong dữ liệu đã đồng bộ."
+            else:
+                message = scope
+            self.lbl_task_department_scope.setText(message)
             self.card_total.lbl_count.setText(str(stats.get("total", 0)))
             self.card_inprogress.lbl_count.setText(str(stats.get("in_progress", 0)))
             self.card_completed.lbl_count.setText(str(stats.get("completed", 0)))
@@ -382,18 +397,22 @@ class TasksViewMixin:
             rate = stats.get("completion_rate", 0)
             self.progress_tasks.setValue(int(rate))
             self.lbl_task_rate_title.setText(
-                f"📈 TỶ LỆ HOÀN THÀNH TOÀN CỤC: {rate}% ({stats.get('completed', 0)}/{stats.get('total', 0)} nhiệm vụ)"
+                f"📈 TỶ LỆ HOÀN THÀNH: {rate}% ({stats.get('completed', 0)}/{stats.get('total', 0)} nhiệm vụ)"
             )
 
             # 1. Bảng phân bổ nhiệm vụ theo đơn vị / phòng ban
-            dept_rows = db.get_tasks_by_department()
-            current_dept = self.cbo_task_dept.currentText()
-            dept_names = sorted([str(d.get("department", "")).strip() for d in dept_rows if d.get("department")])
+            all_dept_rows = db.get_tasks_by_department()
+            dept_rows = db.get_tasks_by_department(department) if department else all_dept_rows
+            current_dept = self.cbo_task_dept.currentData()
+            dept_names = sorted(row["department"] for row in all_dept_rows if row["department"])
+            if hasattr(self, "task_department_model"):
+                self.task_department_model.setStringList(dept_names)
             self.cbo_task_dept.blockSignals(True)
             self.cbo_task_dept.clear()
             self.cbo_task_dept.addItem("Tất cả đơn vị")
-            self.cbo_task_dept.addItems(dept_names)
-            idx_dept = self.cbo_task_dept.findText(current_dept)
+            for name in dept_names:
+                self.cbo_task_dept.addItem(name, name)
+            idx_dept = self.cbo_task_dept.findData(current_dept)
             if idx_dept >= 0:
                 self.cbo_task_dept.setCurrentIndex(idx_dept)
             self.cbo_task_dept.blockSignals(False)
@@ -431,7 +450,7 @@ class TasksViewMixin:
                 self.table_tasks_by_dept.setItem(row, 4, item_ovd)
 
             # 2. Bảng nhiệm vụ trọng tâm cần đôn đốc gấp (Quá hạn & sắp đến hạn)
-            all_tasks = db.get_tasks_filtered()
+            all_tasks = db.get_tasks_filtered(department=department)
             urgent_list = []
             today = date.today()
             for t in all_tasks:
@@ -485,7 +504,8 @@ class TasksViewMixin:
         """Lọc và hiển thị danh sách nhiệm vụ chi tiết theo điều kiện"""
         try:
             kw = self.txt_task_search.text().strip() if hasattr(self, "txt_task_search") else ""
-            dept = self.cbo_task_dept.currentText() if hasattr(self, "cbo_task_dept") else None
+            configured = db.get_setting("task_department").strip()
+            dept = configured if configured and self.chk_task_department.isChecked() else self.cbo_task_dept.currentData()
             status = self.cbo_task_status.currentText() if hasattr(self, "cbo_task_status") else None
             priority = self.cbo_task_priority.currentText() if hasattr(self, "cbo_task_priority") else None
 

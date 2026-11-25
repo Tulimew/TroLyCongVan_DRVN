@@ -12,9 +12,9 @@ from PyQt6.QtWidgets import (
     QHeaderView, QMessageBox, QSystemTrayIcon, QMenu, QAbstractItemView,
     QStatusBar, QFrame, QListWidget, QListWidgetItem, QStackedWidget,
     QDateEdit, QFileDialog, QSplitter, QScrollArea, QTextEdit, QInputDialog,
-    QProgressBar, QComboBox
+    QProgressBar, QComboBox, QCompleter
 )
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QDate, QPointF
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QDate, QPointF, QStringListModel
 from PyQt6.QtGui import QIcon, QColor, QFont, QAction, QPixmap, QImage
 import pymupdf
 
@@ -70,6 +70,13 @@ class ConfigViewMixin:
         self.txt_officer_name = QLineEdit(db.get_officer_name())
         self.txt_officer_name.setPlaceholderText("VD: Tăng Tuấn Linh (dùng để lọc công văn cá nhân)")
 
+        self.txt_task_department = QLineEdit(db.get_setting("task_department"))
+        self.txt_task_department.setPlaceholderText("Chọn hoặc nhập tên đơn vị chủ trì")
+        self.task_department_model = QStringListModel(self)
+        completer = QCompleter(self.task_department_model, self.txt_task_department)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.txt_task_department.setCompleter(completer)
+
         btn_login = QPushButton("🔑 ĐĂNG NHẬP & KIỂM TRA KẾT NỐI")
         btn_login.setStyleSheet("background: #0284c7; color: white; padding: 8px 18px; border-radius: 4px; font-weight: bold;")
         btn_login.clicked.connect(self.action_login)
@@ -80,6 +87,7 @@ class ConfigViewMixin:
         form_auth.addRow("Mật khẩu:", self.txt_password)
         form_auth.addRow("", self.chk_show_pass)
         form_auth.addRow("Họ và tên cán bộ:", self.txt_officer_name)
+        form_auth.addRow("Tên phòng:", self.txt_task_department)
         form_auth.addRow("", btn_login)
         layout.addWidget(grp_auth)
 
@@ -382,6 +390,12 @@ class ConfigViewMixin:
         if hasattr(self, "txt_officer_name"):
             db.set_setting("officer_name", self.txt_officer_name.text().strip())
             self.update_user_header()
+        department = self.txt_task_department.text().strip()
+        if department != db.get_setting("task_department"):
+            db.set_setting("task_department", department)
+            self.chk_task_department.blockSignals(True)
+            self.chk_task_department.setChecked(bool(department))
+            self.chk_task_department.blockSignals(False)
         if hasattr(self, "txt_update_url"):
             db.set_setting("update_url", self.txt_update_url.text().strip())
         if hasattr(self, "txt_nhiemvu_email"):
