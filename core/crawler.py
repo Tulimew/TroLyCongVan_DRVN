@@ -1,6 +1,5 @@
 import requests
 import re
-import urllib3
 import json
 import os
 from bs4 import BeautifulSoup
@@ -8,8 +7,6 @@ from urllib.parse import urljoin
 from datetime import datetime
 from core import db
 from core import notifier
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BASE_URL = "https://congvan.drvn.gov.vn"
 LOGIN_URL = f"{BASE_URL}/login?returnurl=%2fdoc"
@@ -21,6 +18,14 @@ URLS = {
     "outgoing_personal": f"{BASE_URL}/doc/view/shipdoc-send",
     "outgoing_processing": f"{BASE_URL}/doc/view/shipdoc-progress"
 }
+
+
+class _PortalSession(requests.Session):
+    def get_adapter(self, url):
+        if not url.lower().startswith("https://"):
+            raise requests.exceptions.InvalidURL("Cổng công văn yêu cầu HTTPS.")
+        return super().get_adapter(url)
+
 
 def parse_personnel(td_element):
     """Tách chuyên viên xử lý chính và chuyên viên phối hợp từ thẻ TD cột 7"""
@@ -45,8 +50,7 @@ def parse_personnel(td_element):
 
 class DRVNCrawler:
     def __init__(self):
-        self.session = requests.Session()
-        self.session.verify = False
+        self.session = _PortalSession()
         self.session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
             "Accept-Language": "vi,en-US;q=0.9,en;q=0.8",
@@ -87,6 +91,8 @@ class DRVNCrawler:
 
     def login(self, username, password):
         try:
+            self.session.cookies.clear()
+            self.is_logged_in = False
             r = self.session.get(LOGIN_URL, timeout=15)
             if r.status_code != 200:
                 self.last_error = f"Không thể kết nối máy chủ (Mã lỗi {r.status_code})"
@@ -117,9 +123,9 @@ class DRVNCrawler:
 
             cookies = self.session.cookies.get_dict()
             if r_post.status_code in (301, 302) or ".DOTNETNUKE" in cookies:
+                db.set_setting("session_cookies", json.dumps(cookies) if ".DOTNETNUKE" in cookies else "")
                 self.is_logged_in = True
                 self.last_login_time = datetime.now()
-                db.set_setting("session_cookies", json.dumps(cookies))
                 return True
 
             soup = BeautifulSoup(r_post.text, "html.parser")
@@ -142,7 +148,8 @@ class DRVNCrawler:
             try:
                 cookies = json.loads(cookies_json)
                 if ".DOTNETNUKE" in cookies:
-                    self.session.cookies.update(cookies)
+                    for name, value in cookies.items():
+                        self.session.cookies.set(name, value, domain="congvan.drvn.gov.vn", secure=True)
                     self.is_logged_in = True
                     return True
             except:

@@ -6,7 +6,8 @@ REQUIRED_PACKAGES = [
     ("PyQt6", "PyQt6>=6.4.0", "Giao diện đồ họa người dùng (GUI)"),
     ("pymupdf", "pymupdf>=1.23.0", "Trình đọc PDF siêu tốc & con dấu/chữ ký số"),
     ("requests", "requests>=2.28.0", "Giao thức kết nối & đồng bộ dữ liệu mạng"),
-    ("bs4", "beautifulsoup4>=4.11.0", "Bộ phân tích bóc tách công văn")
+    ("bs4", "beautifulsoup4>=4.11.0", "Bộ phân tích bóc tách công văn"),
+    ("cryptography", "cryptography>=44,<49", "Xác minh chữ ký gói cập nhật"),
 ]
 
 def check_package(module_name):

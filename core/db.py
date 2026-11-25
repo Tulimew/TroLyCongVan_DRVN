@@ -3,9 +3,29 @@ import os
 import re
 import json
 from datetime import datetime, date
+from core import windows_credentials
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "drvn_data.db")
 DEFAULT_SAVE_FOLDER = os.path.join(os.path.expanduser("~"), "Downloads", "CongVan_DRVN")
+_SECRET_SETTINGS = (
+    "username", "password", "session_cookies", "nhiemvu_email",
+    "nhiemvu_password", "nhiemvu_token", "telegram_token", "supabase_anon_key",
+    "admin_pin",
+)
+
+
+def _migrate_credentials(conn):
+    placeholders = ", ".join("?" for _ in _SECRET_SETTINGS)
+    where = f"WHERE key IN ({placeholders})"
+    rows = conn.execute(f"SELECT key, value FROM settings {where}", _SECRET_SETTINGS).fetchall()
+    if not rows:
+        return
+    for key, value in rows:
+        if value:
+            windows_credentials.write(DB_PATH, key, value)
+    # Only remove plaintext after all secrets have been written successfully.
+    conn.execute("PRAGMA secure_delete = ON")
+    conn.execute(f"DELETE FROM settings {where}", _SECRET_SETTINGS)
 
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
@@ -23,6 +43,11 @@ def init_db():
         value TEXT
     )
     """)
+    try:
+        _migrate_credentials(conn)
+    except Exception:
+        conn.close()
+        raise
 
     # Bảng công văn đến
     cursor.execute("""
@@ -657,6 +682,8 @@ def get_counts():
     return {"unread": unread, "urgent": urgent, "outgoing": outgoing}
 
 def get_setting(key, default=""):
+    if key in _SECRET_SETTINGS:
+        return windows_credentials.read(DB_PATH, key, default)
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
@@ -665,6 +692,9 @@ def get_setting(key, default=""):
     return row[0] if row else default
 
 def set_setting(key, value):
+    if key in _SECRET_SETTINGS:
+        windows_credentials.write(DB_PATH, key, str(value))
+        return
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
