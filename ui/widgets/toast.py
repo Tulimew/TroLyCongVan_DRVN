@@ -1,5 +1,6 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QApplication
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QApplication, QFrame
 from PyQt6.QtCore import Qt, QTimer
+from core import db
 
 class ToastNotification(QWidget):
     def __init__(self, title, message, doc=None, on_click=None, parent=None, is_outgoing=False):
