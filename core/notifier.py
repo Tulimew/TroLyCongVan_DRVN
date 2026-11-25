@@ -1,6 +1,6 @@
 import requests
 import winsound
-import db
+from core import db
 
 def play_alert_chime():
     """Phát âm thanh chuông báo trên Windows"""

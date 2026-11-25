@@ -2,13 +2,13 @@ import requests
 import json
 import urllib3
 import os
-import db
+from core import db
 
 urllib3.disable_warnings()
 
 def _load_env_file():
     """Tự động nạp cấu hình từ tệp .env nếu tồn tại mà không phụ thuộc thư viện ngoài"""
-    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
     if os.path.exists(env_path):
         try:
             with open(env_path, "r", encoding="utf-8") as f:

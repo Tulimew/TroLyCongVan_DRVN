@@ -4,7 +4,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-import nhiemvu
+from core import nhiemvu
 
 class TestNhiemVu(unittest.TestCase):
     def test_get_supabase_config(self):

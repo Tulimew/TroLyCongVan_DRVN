@@ -8,7 +8,8 @@ import subprocess
 import re
 import requests
 
-APP_VERSION = "1.0.1"
+APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+APP_VERSION = "1.1.0"
 
 def parse_version_tuple(ver_str):
     """Chuyển đổi chuỗi version (ví dụ: '1.0.1' hoặc 'v1.0.1') thành tuple số để so sánh chính xác"""
@@ -158,7 +159,7 @@ def download_and_install_update(download_url, progress_callback=None):
     direct_url = normalize_download_url(download_url)
     temp_dir = tempfile.mkdtemp(prefix="drvn_update_")
     zip_file_path = os.path.join(temp_dir, "package.zip")
-    app_dir = os.path.dirname(os.path.abspath(__file__))
+    app_dir = APP_DIR
 
     session = requests.Session()
     session.headers.update({
@@ -238,7 +239,7 @@ def download_and_install_update(download_url, progress_callback=None):
 def restart_app():
     """Khởi động lại ứng dụng sau khi cập nhật"""
     try:
-        app_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py")
+        app_file = os.path.join(APP_DIR, "main.py")
         subprocess.Popen([sys.executable, app_file])
         sys.exit(0)
     except Exception as e:
@@ -250,7 +251,7 @@ def restart_app():
 
 def update_version_manifest(new_ver=None, changelog_list=None, download_url=None):
     """Cập nhật nội dung file version.json"""
-    app_dir = os.path.dirname(os.path.abspath(__file__))
+    app_dir = APP_DIR
     v_path = os.path.join(app_dir, "version.json")
     data = {
         "version": APP_VERSION,
@@ -295,7 +296,7 @@ def create_release_package(new_ver, changelog_list=None, download_url=None):
     Đóng gói toàn bộ mã nguồn sạch ra Desktop cho Quản trị viên.
     Tuyệt đối không kèm database, thông tin tài khoản cá nhân hoặc file rác.
     """
-    app_dir = os.path.dirname(os.path.abspath(__file__))
+    app_dir = APP_DIR
     desktop = os.path.join(os.path.expanduser("~"), "Desktop")
     if not os.path.exists(desktop):
         desktop = app_dir
@@ -310,7 +311,7 @@ def create_release_package(new_ver, changelog_list=None, download_url=None):
     zip_path = os.path.join(desktop, zip_name)
     
     exclude_files = {
-        "drvn_data.db", "error.log", "debug_crawler.py",
+        ".env", "drvn_data.db", "error.log", "debug_crawler.py",
         "convert_ico.py", "generate_icon.py",
         "doc_progress_page.html", "logged_in_page.html"
     }

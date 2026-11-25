@@ -4,7 +4,7 @@ import re
 import json
 from datetime import datetime, date
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "drvn_data.db")
+DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "drvn_data.db")
 DEFAULT_SAVE_FOLDER = os.path.join(os.path.expanduser("~"), "Downloads", "CongVan_DRVN")
 
 def get_connection():

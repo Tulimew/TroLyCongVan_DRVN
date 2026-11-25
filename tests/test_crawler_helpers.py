@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from crawler import parse_personnel, DRVNCrawler
+from core.crawler import parse_personnel, DRVNCrawler
 
 class TestCrawlerHelpers(unittest.TestCase):
     def test_parse_personnel_separated(self):

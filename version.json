@@ -1,14 +1,12 @@
 {
-  "version": "1.0.1",
+  "version": "1.1.0",
   "name": "Trợ lý Quản lý và Theo dõi Công văn DRVN",
   "release_date": "2026-11-25",
-  "description": "Phiên bản v1.0.1 nâng cao bảo mật, loại bỏ hardcoded paths, tích hợp test suite và CI/CD.",
+  "description": "Phiên bản v1.1.0 tái cấu trúc mã nguồn theo kiến trúc module hóa (core/ và ui/), dễ bảo trì và mở rộng.",
   "changelog": [
-    "Bảo mật: Loại bỏ hoàn toàn hardcoded credentials khỏi source code, chuyển sang biến môi trường và .env",
-    "Đường dẫn: Chuyển đổi 100% đường dẫn tuyệt đối sang tương đối động (%~dp0, os.path.dirname)",
-    "Logging: Tích hợp mô-đun logging có cấu trúc logger.py với cơ chế RotatingFileHandler",
-    "Kiểm thử: Bổ sung bộ Unit Test đầy đủ trong tests/ và runner run_tests.py",
-    "CI/CD: Tích hợp GitHub Actions workflow tự động kiểm tra mã nguồn"
+    "Kiến trúc: Tách main.py (~3.600 dòng) thành các gói module rõ ràng: core/ (db, crawler, nhiemvu, notifier, updater) và ui/ (main_window, views/, widgets/)",
+    "Ổn định: Bảo toàn 100% tính năng hiện có (Single Instance, PDF Viewer, Toast Notification, System Tray, Tự động khởi động cùng Windows)",
+    "Kiểm thử: Toàn bộ 9/9 Unit Tests và GUI smoke test đều vượt qua"
   ],
   "download_url": ""
 }

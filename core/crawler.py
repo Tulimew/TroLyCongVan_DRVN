@@ -6,8 +6,8 @@ import os
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from datetime import datetime
-import db
-import notifier
+from core import db
+from core import notifier
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 

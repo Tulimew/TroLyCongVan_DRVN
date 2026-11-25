@@ -6,7 +6,7 @@ from datetime import date, timedelta
 # Thêm thư mục gốc vào path để import
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-import db
+from core import db
 
 class TestDatabase(unittest.TestCase):
     def setUp(self):
