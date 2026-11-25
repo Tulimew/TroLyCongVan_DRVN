@@ -88,6 +88,7 @@ class OutgoingViewMixin:
         filter_bar.addWidget(btn_7days)
         filter_bar.addWidget(btn_all)
         filter_bar.addWidget(btn_filter)
+        self.add_history_button(filter_bar, "outgoing_department", self.dt_from_out_dept, self.dt_to_out_dept)
         filter_bar.addStretch()
 
         layout.addLayout(filter_bar)
@@ -133,6 +134,7 @@ class OutgoingViewMixin:
         filter_bar.addWidget(btn_7days)
         filter_bar.addWidget(btn_all)
         filter_bar.addWidget(btn_filter)
+        self.add_history_button(filter_bar, "outgoing_personal", self.dt_from_out_pers, self.dt_to_out_pers)
         filter_bar.addStretch()
 
         layout.addLayout(filter_bar)
@@ -169,14 +171,6 @@ class OutgoingViewMixin:
         d_from = self.dt_from_out_dept.date().toPyDate()
         d_to = self.dt_to_out_dept.date().toPyDate()
         docs = db.get_outgoing_docs_filtered(scope="department", from_date=d_from, to_date=d_to)
-        if not docs:
-            try:
-                self.status_bar.showMessage(f"Đang đồng bộ công văn đi của Phòng từ {d_from.strftime('%d/%m/%Y')} đến {d_to.strftime('%d/%m/%Y')}...")
-                self.crawler.fetch_outgoing_docs_department(d_from, d_to)
-                docs = db.get_outgoing_docs_filtered(scope="department", from_date=d_from, to_date=d_to)
-                self.status_bar.showMessage("Đã đồng bộ xong dữ liệu công văn đi của Phòng.")
-            except Exception:
-                pass
         self.table_out_dept.setRowCount(len(docs))
         for row, doc in enumerate(docs):
             self.table_out_dept.setItem(row, 0, QTableWidgetItem(doc.get("so_trinh_ky", "")))
@@ -190,16 +184,7 @@ class OutgoingViewMixin:
     def apply_outgoing_filter_personal(self):
         d_from = self.dt_from_out_pers.date().toPyDate()
         d_to = self.dt_to_out_pers.date().toPyDate()
-        officer = db.get_officer_name()
-        docs = db.get_outgoing_docs_filtered(scope="personal", from_date=d_from, to_date=d_to, officer_name=officer)
-        if not docs:
-            try:
-                self.status_bar.showMessage(f"Đang đồng bộ công văn đi cá nhân từ {d_from.strftime('%d/%m/%Y')} đến {d_to.strftime('%d/%m/%Y')}...")
-                self.crawler.fetch_outgoing_docs_personal(d_from, d_to)
-                docs = db.get_outgoing_docs_filtered(scope="personal", from_date=d_from, to_date=d_to, officer_name=officer)
-                self.status_bar.showMessage("Đã đồng bộ xong dữ liệu công văn đi cá nhân.")
-            except Exception:
-                pass
+        docs = db.get_outgoing_docs_filtered(scope="personal", from_date=d_from, to_date=d_to)
         self.table_out_pers.setRowCount(len(docs))
         for row, doc in enumerate(docs):
             self.table_out_pers.setItem(row, 0, QTableWidgetItem(doc.get("so_di", "")))
@@ -246,8 +231,6 @@ class OutgoingViewMixin:
 
     def refresh_outgoing_processing_table(self):
         docs = db.get_outgoing_docs_filtered(scope="processing")
-        if not docs:
-            docs = db.get_outgoing_docs_filtered(scope="department")
         self.table_out_proc.setRowCount(len(docs))
         for row, doc in enumerate(docs):
             self.table_out_proc.setItem(row, 0, QTableWidgetItem(doc.get("so_trinh_ky", "")))

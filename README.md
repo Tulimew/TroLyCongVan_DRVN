@@ -40,7 +40,7 @@
   + Tùy chọn ghim thông báo nổi cho đến khi người dùng quay lại máy tính và xác nhận.
   + Đẩy thông báo tức thì về điện thoại qua Bot Telegram cá nhân.
 - TRUNG TÂM QUẢN TRỊ VIÊN & CẬP NHẬT GOOGLE DRIVE TỰ ĐỘNG:
-  + Tích hợp tab Quản trị viên trực tiếp trong giao diện: đóng gói code sạch 1-click ra Desktop và đồng bộ liên kết Google Drive trong vài giây.
+  + Đóng gói và ký bản phát hành từ tab Quản trị viên. Xem quy trình cấp khóa ở cuối tài liệu.
 
 ================================================================================
 2. HƯỚNG DẪN TRIỂN KHAI TRÊN MÁY TÍNH CÁ NHÂN KHÁC (TỪNG BƯỚC)
@@ -124,3 +124,43 @@ BƯỚC 5: THIẾT LẬP KHỞI ĐỘNG CÙNG WINDOWS (TÙY CHỌN)
 16. Huong_Dan_Su_Dung.txt      : Hướng dẫn sử dụng & triển khai máy mới.
 17. README.md                  : Tài liệu hướng dẫn định dạng Markdown.
 ================================================================================
+
+## Đồng bộ công văn theo khoảng ngày
+
+- **Quét dữ liệu ngay** cập nhật các hàng chờ và trang mới nhất của các danh sách công văn khác.
+- Trong tab công văn cá nhân hoặc đơn vị, chọn ngày rồi bấm **Đồng bộ khoảng ngày** để tải
+  toàn bộ các trang của danh sách đó. Với công văn đến cá nhân, lượt đồng bộ nhập mục
+  **Đã xử lý** và làm mới hàng chờ. **Lọc** chỉ áp dụng bộ lọc cho dữ liệu đã lưu.
+- Nếu mục lịch sử thiếu ngày trong danh sách web, ứng dụng dùng khoảng ngày mà cổng đã
+  trả mục đó. Hãy đồng bộ lại nếu cần tra cứu theo một khoảng hẹp hơn.
+
+## HTTPS và thông tin đăng nhập trên Windows
+
+Ứng dụng xác minh chứng chỉ HTTPS khi kết nối cổng công văn. Nếu đơn vị dùng CA nội bộ,
+hãy đặt biến môi trường `REQUESTS_CA_BUNDLE` trỏ tới bộ chứng chỉ PEM được đơn vị cấp.
+
+Ở lần mở bản 1.1.1 trên thư mục cài đặt cũ, ứng dụng chuyển tài khoản, mật khẩu,
+cookie phiên, token và PIN đã lưu vào Windows Credential Manager của người dùng hiện tại.
+Các hàng SQLite cũ chỉ được xóa sau khi đã ghi thành công vào kho bảo mật.
+Không mang theo thông tin đăng nhập khi sao chép ứng dụng sang máy hoặc thư mục khác.
+
+## Phát hành gói cập nhật đã ký
+
+1. Trên máy Windows dùng để phát hành, chạy `python admin_update_tool.py --init-signing-key`.
+   Khóa riêng được lưu trong Windows Credential Manager. Tệp `update_public_key.pub`
+   chứa khóa công khai. Xác nhận khóa công khai qua kênh quản trị tin cậy rồi đặt tệp
+   cạnh `main.py` trên từng máy nhận cập nhật. Khi đổi khóa, phân phối tệp mới qua
+   cùng kênh quản trị.
+2. Trên máy ký, dùng tab Quản trị viên hoặc `python admin_update_tool.py` để tạo ZIP
+   và `version.json` phát hành. Tệp này có trường `package_signature` và độc lập với
+   `version.json` của bản đang chạy.
+3. Tải ZIP nguyên trạng lên máy chủ HTTPS. Điền URL tải ZIP trong công cụ quản trị, sau
+   đó tải `version.json` phát hành lên máy chủ và cấu hình URL này trên máy nhận.
+
+Ứng dụng xác minh chữ ký Ed25519 trên mã băm SHA-256 của toàn bộ ZIP và đối chiếu phiên
+bản bên trong gói đã ký trước khi thay tệp. Nếu việc thay tệp lỗi, bản cũ được phục hồi.
+Nếu tiến trình bị dừng giữa chừng, ứng dụng phục hồi khi mở lại. Cơ sở dữ liệu, cấu hình
+cục bộ và khóa công khai nằm ngoài danh sách tệp mà gói cập nhật có thể thay thế.
+
+Các gói cũ chưa ký cần được thay bằng bản phát hành đã ký. Cài bản 1.1.1 lần đầu
+từ nguồn đã xác nhận để thiết lập thư viện và khóa công khai tin cậy.

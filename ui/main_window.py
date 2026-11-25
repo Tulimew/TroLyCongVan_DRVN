@@ -2,6 +2,7 @@ import os
 import re
 import webbrowser
 import tempfile
+import threading
 import subprocess
 from datetime import datetime, date, timedelta
 
@@ -38,28 +39,64 @@ class BackgroundWorker(QThread):
     finished_signal = pyqtSignal(str)
     new_doc_signal = pyqtSignal(dict)
     out_update_signal = pyqtSignal(dict)
+    progress_signal = pyqtSignal(str)
 
-    def __init__(self, crawler):
+    def __init__(self, crawler, history=None):
         super().__init__()
         self.crawler = crawler
+        self.history = history
         self.crawler.on_new_personal_doc = self.new_doc_signal.emit
         self.crawler.on_outgoing_status_updated = self.out_update_signal.emit
 
     def run(self):
         try:
-            # Tự động duy trì phiên đăng nhập (tự re-login nếu phiên web hết hạn)
-            self.crawler.ensure_logged_in()
+            if not self.crawler.ensure_logged_in():
+                self.finished_signal.emit("Đồng bộ thất bại: Chưa xác thực được phiên đăng nhập DRVN.")
+                return
+        except Exception as error:
+            self.finished_signal.emit(f"Đồng bộ thất bại: {error}")
+            return
 
-            # Quét tất cả các danh mục
-            self.crawler.fetch_incoming_docs_personal()
-            self.crawler.fetch_incoming_docs_department()
-            self.crawler.fetch_outgoing_docs_department()
-            self.crawler.fetch_outgoing_docs_personal()
-            self.crawler.fetch_outgoing_docs_processing()
+        if self.history is None:
+            jobs = [
+                ("Công văn đi đang xử lý", self.crawler.fetch_outgoing_docs_processing, (), {}),
+                ("Công văn đến chờ xử lý", self.crawler.fetch_incoming_docs_personal, (), {}),
+                ("Công văn đến đơn vị", self.crawler.fetch_incoming_docs_department, (), {"max_pages": 1}),
+                ("Công văn đi đơn vị", self.crawler.fetch_outgoing_docs_department, (), {"max_pages": 1}),
+                ("Công văn đi cá nhân", self.crawler.fetch_outgoing_docs_personal, (), {"max_pages": 1}),
+            ]
+        else:
+            feed, start, end = self.history
+            history_jobs = {
+                "incoming_personal": ("Công văn đến cá nhân đã xử lý", self.crawler.fetch_incoming_history),
+                "incoming_department": ("Công văn đến đơn vị", self.crawler.fetch_incoming_docs_department),
+                "outgoing_personal": ("Công văn đi cá nhân", self.crawler.fetch_outgoing_docs_personal),
+                "outgoing_department": ("Công văn đi đơn vị", self.crawler.fetch_outgoing_docs_department),
+            }
+            label, fetch = history_jobs[feed]
+            jobs = [(label, fetch, (start, end), {})]
+            if feed == "incoming_personal":
+                jobs.append(("Công văn đến chờ xử lý", self.crawler.fetch_incoming_docs_personal, (), {}))
 
-            self.finished_signal.emit(f"Cập nhật thành công lúc: {datetime.now().strftime('%H:%M:%S')}")
-        except Exception as e:
-            self.finished_signal.emit(f"Lỗi quét dữ liệu: {str(e)}")
+        errors = []
+        successes = []
+        for label, fetch, args, kwargs in jobs:
+            self.progress_signal.emit(f"Đang đồng bộ {label}…")
+            self.crawler.on_list_page = lambda page, count, label=label: self.progress_signal.emit(
+                f"Đang đồng bộ {label} · Trang {page} · Đã nhận {count} mục"
+            )
+            try:
+                docs = fetch(*args, **kwargs)
+                successes.append(f"{label}: {len(docs)}")
+            except Exception as error:
+                errors.append(f"{label}: {error}")
+        self.crawler.on_list_page = None
+        if errors:
+            status = "Đồng bộ chưa hoàn tất" if successes else "Đồng bộ thất bại"
+            self.finished_signal.emit(f"{status}: {' | '.join(errors)}")
+        else:
+            title = "Đã đồng bộ khoảng ngày đã chọn" if self.history else "Đã quét danh sách chờ và trang mới nhất"
+            self.finished_signal.emit(f"{title} lúc {datetime.now():%H:%M:%S} · {' | '.join(successes)}")
 
 
 class MainWindow(
@@ -73,10 +110,16 @@ class MainWindow(
     PdfViewerMixin,
     SystemTrayMixin,
 ):
+    read_finished = pyqtSignal(str, bool)
+
     def __init__(self):
         super().__init__()
+        self.read_in_progress = set()
+        self.read_finished.connect(self.complete_doc_read)
         self.crawler = DRVNCrawler()
+        self.detail_crawler = DRVNCrawler()
         self.worker = None
+        self.history_buttons = []
         self.selected_doc_for_detail = None
         self.is_admin = False
 
@@ -316,17 +359,60 @@ class MainWindow(
         self.timer.start(interval_min * 60 * 1000)
 
     def start_background_scan(self):
-        self.status_bar.showMessage("Đang đồng bộ dữ liệu từ congvan.drvn.gov.vn...")
-        self.btn_quick_scan.setEnabled(False)
+        self._start_scan()
 
-        self.worker = BackgroundWorker(self.crawler)
+    def add_history_button(self, layout, feed, from_date, to_date):
+        button = QPushButton("Đồng bộ khoảng ngày")
+        button.clicked.connect(lambda: self.sync_history(feed, from_date.date().toPyDate(), to_date.date().toPyDate()))
+        self.history_buttons.append(button)
+        layout.addWidget(button)
+
+    def sync_history(self, feed, start, end):
+        if start > end:
+            self.status_bar.showMessage("Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.")
+            return
+        self._start_scan((feed, start, end))
+
+    def _start_scan(self, history=None):
+        if self.worker is not None and self.worker.isRunning():
+            return
+        self.status_bar.showMessage("Đang đồng bộ dữ liệu từ congvan.drvn.gov.vn…")
+        for button in [self.btn_quick_scan, *self.history_buttons]:
+            button.setEnabled(False)
+
+        self.worker = BackgroundWorker(self.crawler, history)
         self.worker.finished_signal.connect(self.on_background_scan_finished)
+        self.worker.progress_signal.connect(self.status_bar.showMessage)
         self.worker.new_doc_signal.connect(self.show_floating_incoming_alert)
         self.worker.out_update_signal.connect(self.show_floating_outgoing_alert)
         self.worker.start()
 
+    def request_doc_read(self, doc):
+        doc_id = doc["id"]
+        if doc_id in self.read_in_progress:
+            return
+        self.read_in_progress.add(doc_id)
+        self.status_bar.showMessage("Đang xác nhận trạng thái đã đọc với cổng DRVN…")
+
+        def confirm():
+            confirmed = DRVNCrawler().mark_doc_read_on_web(doc.get("detail_url", ""))
+            self.read_finished.emit(doc_id, confirmed)
+
+        threading.Thread(target=confirm, daemon=True).start()
+
+    def complete_doc_read(self, doc_id, confirmed):
+        self.read_in_progress.discard(doc_id)
+        if confirmed:
+            db.mark_as_read(doc_id)
+            self.update_badges()
+            self.refresh_quick_alerts()
+            self.status_bar.showMessage("Cổng DRVN đã trả trang chi tiết. Đã cập nhật trạng thái đã đọc.")
+        else:
+            self.status_bar.showMessage("Chưa xác nhận được trạng thái đã đọc từ cổng DRVN. Có thể thử lại.")
+
     def on_background_scan_finished(self, msg):
-        self.btn_quick_scan.setEnabled(True)
+        for button in [self.btn_quick_scan, *self.history_buttons]:
+            button.setEnabled(True)
         self.status_bar.showMessage(msg)
         self.refresh_all_data()
 

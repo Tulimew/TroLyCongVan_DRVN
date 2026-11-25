@@ -1,12 +1,12 @@
 {
-  "version": "1.1.0",
+  "version": "1.1.2",
   "name": "Trợ lý Quản lý và Theo dõi Công văn DRVN",
   "release_date": "2026-11-25",
-  "description": "Phiên bản v1.1.0 tái cấu trúc mã nguồn theo kiến trúc module hóa (core/ và ui/), dễ bảo trì và mở rộng.",
+  "description": "Sửa hàng chờ công văn đi và bổ sung đồng bộ lịch sử có phân trang.",
   "changelog": [
-    "Kiến trúc: Tách main.py (~3.600 dòng) thành các gói module rõ ràng: core/ (db, crawler, nhiemvu, notifier, updater) và ui/ (main_window, views/, widgets/)",
-    "Ổn định: Bảo toàn 100% tính năng hiện có (Single Instance, PDF Viewer, Toast Notification, System Tray, Tự động khởi động cùng Windows)",
-    "Kiểm thử: Toàn bộ 9/9 Unit Tests và GUI smoke test đều vượt qua"
+    "Hiển thị hàng chờ công văn đi theo danh sách trên cổng DRVN.",
+    "Đồng bộ đầy đủ các trang trong khoảng ngày và nhập lịch sử công văn cá nhân đã xử lý.",
+    "Báo lỗi đăng nhập, tải trang và đồng bộ chưa hoàn tất."
   ],
   "download_url": ""
 }

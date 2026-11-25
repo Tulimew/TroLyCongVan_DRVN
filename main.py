@@ -8,13 +8,30 @@ if sys.stderr is None:
 
 import ctypes
 import traceback
+from ctypes import wintypes
 from datetime import datetime
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 
 from logger import log
-from ui.main_window import MainWindow
+from update_transaction import recover_interrupted_update
+
+
+def wait_for_restart_parent(pid):
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    parent = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+    if not parent:
+        return ctypes.get_last_error() == 87  # The parent already exited.
+    try:
+        return kernel.WaitForSingleObject(parent, 60_000) == 0
+    finally:
+        kernel.CloseHandle(parent)
 
 
 def handle_global_exception(exc_type, exc_value, exc_traceback):
@@ -101,12 +118,26 @@ class SingleInstanceManager:
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "--restart-after":
+        if not wait_for_restart_parent(int(sys.argv[2])):
+            sys.exit(1)
+        del sys.argv[1:]
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
 
     instance_mgr = SingleInstanceManager()
     if instance_mgr.is_another_instance_running():
         sys.exit(0)
+
+    try:
+        if recover_interrupted_update(os.path.dirname(os.path.abspath(__file__))):
+            log.warning("Đã khôi phục bản cũ sau khi quá trình cập nhật bị gián đoạn.")
+    except (OSError, ValueError) as error:
+        log.exception("Không thể khôi phục bản cập nhật.")
+        QMessageBox.critical(None, "Khôi phục bản cập nhật", str(error))
+        sys.exit(1)
+
+    from ui.main_window import MainWindow
 
     log.info("Khởi động Trợ lý Công văn DRVN...")
 

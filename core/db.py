@@ -1,11 +1,32 @@
 import sqlite3
+from contextlib import closing
 import os
 import re
 import json
 from datetime import datetime, date
+from core import windows_credentials
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "drvn_data.db")
 DEFAULT_SAVE_FOLDER = os.path.join(os.path.expanduser("~"), "Downloads", "CongVan_DRVN")
+_SECRET_SETTINGS = (
+    "username", "password", "session_cookies", "nhiemvu_email",
+    "nhiemvu_password", "nhiemvu_token", "telegram_token", "supabase_anon_key",
+    "admin_pin",
+)
+
+
+def _migrate_credentials(conn):
+    placeholders = ", ".join("?" for _ in _SECRET_SETTINGS)
+    where = f"WHERE key IN ({placeholders})"
+    rows = conn.execute(f"SELECT key, value FROM settings {where}", _SECRET_SETTINGS).fetchall()
+    if not rows:
+        return
+    for key, value in rows:
+        if value:
+            windows_credentials.write(DB_PATH, key, value)
+    # Only remove plaintext after all secrets have been written successfully.
+    conn.execute("PRAGMA secure_delete = ON")
+    conn.execute(f"DELETE FROM settings {where}", _SECRET_SETTINGS)
 
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
@@ -23,6 +44,11 @@ def init_db():
         value TEXT
     )
     """)
+    try:
+        _migrate_credentials(conn)
+    except Exception:
+        conn.close()
+        raise
 
     # Bảng công văn đến
     cursor.execute("""
@@ -63,11 +89,23 @@ def init_db():
         "download_url": "TEXT",
         "view_url": "TEXT",
         "detail_url": "TEXT",
-        "attachments": "TEXT"
+        "attachments": "TEXT",
+        "is_processed": "INTEGER NOT NULL DEFAULT 0",
+        "is_pending": "INTEGER NOT NULL DEFAULT 1",
     }
     for col_name, col_type in new_cols.items():
         if col_name not in existing_cols:
             cursor.execute(f"ALTER TABLE incoming_docs ADD COLUMN {col_name} {col_type}")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS incoming_history_ranges (
+        id TEXT NOT NULL,
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        PRIMARY KEY (id, start_date, end_date)
+    )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_incoming_detail ON incoming_docs (scope, detail_url)")
 
     # Cập nhật phân loại xử lý mặc định cho các dòng cũ chưa có
     cursor.execute("""
@@ -118,18 +156,22 @@ def init_db():
         if col_name not in existing_out_cols:
             cursor.execute(f"ALTER TABLE outgoing_docs ADD COLUMN {col_name} {col_type}")
 
-    # Tự động dọn dẹp các bản ghi trùng lặp (chỉ nhóm theo số đến khi có số đến thực tế)
     cursor.execute("""
-    DELETE FROM incoming_docs 
-    WHERE so_den IS NOT NULL AND TRIM(so_den) != '' AND rowid NOT IN (
-        SELECT MAX(rowid) FROM incoming_docs WHERE TRIM(so_den) != '' GROUP BY so_den, scope
+    CREATE TABLE IF NOT EXISTS outgoing_processing (
+        id TEXT PRIMARY KEY,
+        payload TEXT NOT NULL
     )
     """)
     cursor.execute("""
-    DELETE FROM outgoing_docs 
-    WHERE so_di IS NOT NULL AND TRIM(so_di) != '' AND rowid NOT IN (
-        SELECT MAX(rowid) FROM outgoing_docs WHERE TRIM(so_di) != '' GROUP BY so_di, scope
+    CREATE TABLE IF NOT EXISTS outgoing_membership (
+        scope TEXT NOT NULL,
+        id TEXT NOT NULL,
+        PRIMARY KEY (scope, id)
     )
+    """)
+    cursor.execute("""
+    INSERT OR IGNORE INTO outgoing_membership (scope, id)
+    SELECT scope, id FROM outgoing_docs WHERE scope IN ('personal', 'department')
     """)
     cursor.execute("""
     DELETE FROM outgoing_docs 
@@ -235,13 +277,24 @@ def get_warning_days():
         return 3
 
 def upsert_incoming_doc(doc):
-    conn = get_connection()
+    return bool(save_incoming_docs([doc]))
+
+
+def save_incoming_docs(docs, *, replace_pending=False):
+    warning_days = get_warning_days()
+    with closing(get_connection()) as conn, conn:
+        if replace_pending:
+            conn.execute("UPDATE incoming_docs SET is_pending = 0 WHERE scope = 'personal' AND is_pending = 1")
+        return [doc for doc in docs if _upsert_incoming_doc(conn, doc, warning_days)]
+
+
+def _upsert_incoming_doc(conn, doc, warning_days):
     cursor = conn.cursor()
 
     doc_id = doc.get("id") or f"{doc.get('so_den', '')}_{doc.get('so_ky_hieu', '')}"
     han_xu_ly = doc.get("han_xu_ly", "").strip()
+    thoi_han = doc.get("thoi_han", "")
     days_left = calculate_days_remaining(han_xu_ly)
-    warning_days = get_warning_days()
     is_urgent = 1 if ((days_left <= warning_days and days_left != 999) or (days_left < 0)) else 0
 
     chi_dao = doc.get("chi_dao", "")
@@ -249,6 +302,8 @@ def upsert_incoming_doc(doc):
 
     so_den = doc.get("so_den", "").strip()
     scope = doc.get("scope", "personal").strip()
+    processed = int(bool(doc.get("is_processed")))
+    pending = int(scope == "personal" and not processed)
     detail_url = doc.get("detail_url", "")
     raw_attach = doc.get("attachments")
     attach_json = json.dumps(raw_attach, ensure_ascii=False) if isinstance(raw_attach, list) else (raw_attach or "")
@@ -257,22 +312,21 @@ def upsert_incoming_doc(doc):
     if not phan_loai_xu_ly:
         phan_loai_xu_ly = "Công văn đến phải xử lý" if han_xu_ly else "Nhận để biết và lưu"
 
-    # Kiểm tra bản ghi trùng: ưu tiên ID, link chi tiết hoặc số/ký hiệu + ngày ban hành
-    existing_row = None
-    if detail_url:
-        cursor.execute("SELECT id, is_read, attachments, phan_loai_xu_ly FROM incoming_docs WHERE id = ? OR (detail_url = ? AND scope = ?)", (doc_id, detail_url, scope))
-        existing_row = cursor.fetchone()
-    if not existing_row and so_den and re.search(r'\d+', so_den):
-        cursor.execute("SELECT id, is_read, attachments, phan_loai_xu_ly FROM incoming_docs WHERE id = ? OR (so_den = ? AND scope = ?)", (doc_id, so_den, scope))
-        existing_row = cursor.fetchone()
-    if not existing_row and doc.get("so_ky_hieu"):
-        cursor.execute("SELECT id, is_read, attachments, phan_loai_xu_ly FROM incoming_docs WHERE id = ? OR (so_ky_hieu = ? AND ngay_ban_hanh = ? AND scope = ?)", (doc_id, doc.get("so_ky_hieu"), doc.get("ngay_ban_hanh", ""), scope))
-        existing_row = cursor.fetchone()
-    if not existing_row:
-        cursor.execute("SELECT id, is_read, attachments, phan_loai_xu_ly FROM incoming_docs WHERE id = ?", (doc_id,))
-        existing_row = cursor.fetchone()
+    row = cursor.execute("SELECT * FROM incoming_docs WHERE id = ?", (doc_id,)).fetchone()
+    if not row and detail_url:
+        row = cursor.execute("SELECT * FROM incoming_docs WHERE detail_url = ? AND scope = ?", (detail_url, scope)).fetchone()
+    if not row and doc.get("ngay_ban_hanh") and doc.get("so_ky_hieu"):
+        matches = cursor.execute("""
+        SELECT * FROM incoming_docs WHERE scope = ? AND so_den = ? AND so_ky_hieu = ?
+        AND ngay_ban_hanh = ? AND (id NOT LIKE 'item_%' OR ? NOT LIKE 'item_%') LIMIT 2
+        """, (scope, so_den, doc["so_ky_hieu"], doc["ngay_ban_hanh"], doc_id)).fetchall()
+        if len(matches) == 1:
+            row = matches[0]
 
-    row = existing_row
+    target_id = row["id"] if row else doc_id
+    if bounds := doc.get("history_range"):
+        cursor.execute("INSERT OR IGNORE INTO incoming_history_ranges (id, start_date, end_date) VALUES (?, ?, ?)",
+                       (target_id, *bounds))
 
     is_new = False
     if row is None:
@@ -282,47 +336,53 @@ def upsert_incoming_doc(doc):
             id, so_den, so_ky_hieu, ngay_ban_hanh, trich_yeu, ngay_den,
             han_xu_ly, thoi_han, chi_dao, lanh_dao_cuc, lanh_dao_phong,
             xu_ly_chinh, phoi_hop, phan_loai_xu_ly, scope, download_url, view_url, detail_url, attachments,
-            is_read, is_urgent, days_remaining
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+            is_read, is_urgent, days_remaining, is_processed, is_pending
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             doc_id, so_den, doc.get("so_ky_hieu", ""),
             doc.get("ngay_ban_hanh", ""), doc.get("trich_yeu", ""),
-            doc.get("ngay_den", ""), han_xu_ly, doc.get("thoi_han", ""),
+            doc.get("ngay_den", ""), han_xu_ly, thoi_han,
             chi_dao, ld_cuc, ld_phong,
             doc.get("xu_ly_chinh", ""), doc.get("phoi_hop", ""),
             phan_loai_xu_ly,
             scope, doc.get("download_url", ""), doc.get("view_url", ""),
             detail_url, attach_json,
-            is_urgent, days_left
+            processed, is_urgent, days_left, processed, pending
         ))
     else:
-        target_id = row["id"]
         # Nếu bản ghi cũ đã có attachments mà bản mới chưa có, giữ lại attachments cũ
-        final_attach = attach_json if attach_json else (row["attachments"] or "")
+        final_attach = attach_json or row["attachments"] or ""
         # Nếu đã có phân loại từ trước và bản mới không chỉ định rõ, giữ lại
         if not doc.get("phan_loai_xu_ly") and row["phan_loai_xu_ly"]:
             phan_loai_xu_ly = row["phan_loai_xu_ly"]
+        if processed:
+            detail_url = row["detail_url"] or detail_url
+            final_attach = row["attachments"] or final_attach
+            thoi_han = row["thoi_han"]
+            phan_loai_xu_ly = row["phan_loai_xu_ly"] or phan_loai_xu_ly
+            if not han_xu_ly:
+                han_xu_ly, days_left, is_urgent = row["han_xu_ly"], row["days_remaining"], row["is_urgent"]
 
         cursor.execute("""
         UPDATE incoming_docs SET
-            so_den = ?, so_ky_hieu = ?, ngay_ban_hanh = ?, trich_yeu = ?,
-            ngay_den = ?, han_xu_ly = ?, thoi_han = ?, chi_dao = ?,
+            so_den = ?, so_ky_hieu = ?, ngay_ban_hanh = COALESCE(NULLIF(?, ''), ngay_ban_hanh), trich_yeu = ?,
+            ngay_den = COALESCE(NULLIF(?, ''), ngay_den), han_xu_ly = ?, thoi_han = ?, chi_dao = ?,
             lanh_dao_cuc = ?, lanh_dao_phong = ?, xu_ly_chinh = ?, phoi_hop = ?,
-            phan_loai_xu_ly = ?, scope = ?, download_url = ?, view_url = ?, detail_url = ?, attachments = ?,
-            is_urgent = ?, days_remaining = ?, updated_at = CURRENT_TIMESTAMP
+            phan_loai_xu_ly = ?, scope = ?, download_url = COALESCE(NULLIF(?, ''), download_url),
+            view_url = COALESCE(NULLIF(?, ''), view_url), detail_url = COALESCE(NULLIF(?, ''), detail_url), attachments = ?,
+            is_urgent = ?, days_remaining = ?, is_processed = ?, is_pending = ?,
+            is_read = CASE WHEN ? THEN 1 ELSE is_read END, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """, (
             so_den, doc.get("so_ky_hieu", ""),
             doc.get("ngay_ban_hanh", ""), doc.get("trich_yeu", ""),
-            doc.get("ngay_den", ""), han_xu_ly, doc.get("thoi_han", ""),
+            doc.get("ngay_den", ""), han_xu_ly, thoi_han,
             chi_dao, ld_cuc, ld_phong, doc.get("xu_ly_chinh", ""), doc.get("phoi_hop", ""),
             phan_loai_xu_ly, scope, doc.get("download_url", ""), doc.get("view_url", ""),
             detail_url, final_attach,
-            is_urgent, days_left, target_id
+            is_urgent, days_left, processed, pending, processed, target_id
         ))
 
-    conn.commit()
-    conn.close()
     return is_new
 
 def update_doc_phan_loai(doc_id, phan_loai):
@@ -402,7 +462,15 @@ def get_officer_name():
     return get_setting("officer_name", "Tăng Tuấn Linh")
 
 def upsert_outgoing_doc(doc):
-    conn = get_connection()
+    return bool(save_outgoing_docs([doc]))
+
+
+def save_outgoing_docs(docs):
+    with closing(get_connection()) as conn, conn:
+        return [doc for doc in docs if _upsert_outgoing_doc(conn, doc)]
+
+
+def _upsert_outgoing_doc(conn, doc):
     cursor = conn.cursor()
     doc_id = doc.get("id") or f"out_{doc.get('so_trinh_ky', '')}_{doc.get('so_di', '')}_{doc.get('soan_thao', '')}"
     so_trinh_ky = doc.get("so_trinh_ky", "").strip()
@@ -413,14 +481,20 @@ def upsert_outgoing_doc(doc):
 
     # Bỏ qua hoàn toàn các dòng giả lập không phải trả lời
     if "không phải trả lời cho công văn đến" in trich_yeu.lower():
-        conn.close()
         return False
 
     cursor.execute("SELECT id, trang_thai, so_di FROM outgoing_docs WHERE id = ?", (doc_id,))
     row = cursor.fetchone()
     if not row and so_trinh_ky and trich_yeu:
-        cursor.execute("SELECT id, trang_thai, so_di FROM outgoing_docs WHERE so_trinh_ky = ? AND trich_yeu = ?", (so_trinh_ky, trich_yeu))
-        row = cursor.fetchone()
+        matches = cursor.execute("""
+            SELECT id, trang_thai, so_di FROM outgoing_docs
+            WHERE so_trinh_ky = ? AND trich_yeu = ?
+              AND (id NOT LIKE 'ship_%' OR ? NOT LIKE 'ship_%')
+              AND (ngay_ban_hanh = ? OR COALESCE(ngay_ban_hanh, '') = '')
+            LIMIT 2
+        """, (so_trinh_ky, trich_yeu, doc_id, doc.get("ngay_ban_hanh", ""))).fetchall()
+        if len(matches) == 1:
+            row = matches[0]
 
     has_update = 0
     if row:
@@ -431,7 +505,7 @@ def upsert_outgoing_doc(doc):
         # Không hạ cấp trạng thái từ "Đã xử lý" (hoặc đã có Số đi) về "Chờ xử lý / Trình ký"
         # để tránh lật trạng thái qua lại gây thông báo lặp vô tận giữa shipdoc-send và shipdoc-progress
         effective_status = new_status
-        if (old_status == "Đã xử lý" or old_so_di) and new_status == "Chờ xử lý / Trình ký":
+        if (old_so_di and not so_di) or (old_status == "Đã xử lý" and new_status == "Chờ xử lý / Trình ký"):
             effective_status = old_status
 
         if old_status != effective_status:
@@ -476,8 +550,10 @@ def upsert_outgoing_doc(doc):
             doc.get("scope", "personal"), doc.get("download_url", ""), doc.get("view_url", "")
         ))
 
-    conn.commit()
-    conn.close()
+    scope = doc.get("scope", "personal")
+    if scope in ("department", "personal"):
+        cursor.execute("INSERT OR IGNORE INTO outgoing_membership (scope, id) VALUES (?, ?)",
+                       (scope, row["id"] if row else doc_id))
     return has_update == 1
 
 def get_incoming_docs_filtered(scope=None, from_date=None, to_date=None, unread_only=False):
@@ -490,10 +566,14 @@ def get_incoming_docs_filtered(scope=None, from_date=None, to_date=None, unread_
         query += " AND scope = ?"
         params.append(scope)
     if unread_only:
-        query += " AND is_read = 0"
+        query += " AND is_read = 0 AND (scope != 'personal' OR is_pending = 1) AND is_processed = 0"
 
     cursor.execute(query + " ORDER BY created_at DESC", params)
     rows = cursor.fetchall()
+    if from_date or to_date:
+        dated_history = {row["id"] for row in conn.execute("""
+            SELECT id FROM incoming_history_ranges WHERE start_date >= ? AND end_date <= ?
+        """, ((from_date or date.min).isoformat(), (to_date or date.max).isoformat()))}
     conn.close()
 
     result = [dict(r) for r in rows]
@@ -503,7 +583,8 @@ def get_incoming_docs_filtered(scope=None, from_date=None, to_date=None, unread_
         for d in result:
             doc_d = parse_date_vietnam(d.get("ngay_den") or d.get("ngay_ban_hanh"))
             if not doc_d:
-                filtered.append(d)
+                if not d["is_processed"] or d["id"] in dated_history:
+                    filtered.append(d)
                 continue
             if from_date and doc_d < from_date:
                 continue
@@ -514,20 +595,32 @@ def get_incoming_docs_filtered(scope=None, from_date=None, to_date=None, unread_
 
     return result
 
-def get_outgoing_docs_filtered(scope=None, from_date=None, to_date=None, officer_name=None):
+def replace_outgoing_processing(docs):
+    records = {doc["id"]: doc for doc in docs}
+    with closing(get_connection()) as conn, conn:
+        conn.execute("DELETE FROM outgoing_processing")
+        for doc_id, doc in records.items():
+            conn.execute("INSERT INTO outgoing_processing (id, payload) VALUES (?, ?)",
+                         (doc_id, json.dumps(doc, ensure_ascii=False)))
+            # Remember new pending documents so a later publication can trigger an alert.
+            if not conn.execute("SELECT 1 FROM outgoing_docs WHERE id = ?", (doc_id,)).fetchone():
+                _upsert_outgoing_doc(conn, doc)
+
+
+def get_outgoing_docs_filtered(scope=None, from_date=None, to_date=None):
+    if scope == "processing":
+        with closing(get_connection()) as conn:
+            return [json.loads(row["payload"]) for row in conn.execute(
+                "SELECT payload FROM outgoing_processing ORDER BY rowid"
+            )]
     conn = get_connection()
     cursor = conn.cursor()
     query = "SELECT * FROM outgoing_docs WHERE LOWER(trich_yeu) NOT LIKE '%không phải trả lời cho công văn đến%'"
     params = []
 
-    if scope == "personal":
-        name = (officer_name or get_officer_name()).strip()
-        query += " AND (scope = 'personal' OR soan_thao LIKE ?)"
-        params.append(f"%{name}%")
-    elif scope == "department":
-        query += " AND scope = 'department'"
-    elif scope == "processing":
-        query += " AND (scope = 'processing' OR trang_thai LIKE '%Chờ%' OR trang_thai LIKE '%Trình ký%')"
+    if scope in ("personal", "department"):
+        query += " AND id IN (SELECT id FROM outgoing_membership WHERE scope = ?)"
+        params.append(scope)
     elif scope:
         query += " AND scope = ?"
         params.append(scope)
@@ -577,6 +670,7 @@ def get_urgent_docs(scope=None, warning_days=None):
     query = """
     SELECT * FROM incoming_docs 
     WHERE (days_remaining <= ? OR days_remaining < 0) AND days_remaining != 999
+        AND is_processed = 0 AND (scope != 'personal' OR is_pending = 1)
     """
     params = [warning_days]
     if scope:
@@ -635,28 +729,30 @@ def get_counts():
     conn = get_connection()
     cursor = conn.cursor()
     # Đếm số lượng công văn cá nhân chưa đọc
-    cursor.execute("SELECT COUNT(*) FROM incoming_docs WHERE scope = 'personal' AND is_read = 0")
+    cursor.execute("SELECT COUNT(*) FROM incoming_docs WHERE scope = 'personal' AND is_read = 0 AND is_pending = 1 AND is_processed = 0")
     unread = cursor.fetchone()[0]
 
     # Đếm số lượng công văn cá nhân gần đến hạn hoặc quá hạn
     cursor.execute("""
     SELECT COUNT(*) FROM incoming_docs 
-    WHERE scope = 'personal' AND (days_remaining <= ? OR days_remaining < 0) AND days_remaining != 999
+    WHERE scope = 'personal' AND is_pending = 1 AND is_processed = 0
+      AND (days_remaining <= ? OR days_remaining < 0) AND days_remaining != 999
     """, (warning_days,))
     urgent = cursor.fetchone()[0]
 
-    officer = get_officer_name()
     cursor.execute("""
-    SELECT COUNT(*) FROM outgoing_docs 
-    WHERE (scope = 'personal' OR soan_thao LIKE ?) 
+    SELECT COUNT(*) FROM outgoing_docs
+    WHERE id IN (SELECT id FROM outgoing_membership WHERE scope = 'personal')
       AND LOWER(trich_yeu) NOT LIKE '%không phải trả lời cho công văn đến%'
-    """, (f"%{officer}%",))
+    """)
     outgoing = cursor.fetchone()[0]
 
     conn.close()
     return {"unread": unread, "urgent": urgent, "outgoing": outgoing}
 
 def get_setting(key, default=""):
+    if key in _SECRET_SETTINGS:
+        return windows_credentials.read(DB_PATH, key, default)
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
@@ -665,6 +761,9 @@ def get_setting(key, default=""):
     return row[0] if row else default
 
 def set_setting(key, value):
+    if key in _SECRET_SETTINGS:
+        windows_credentials.write(DB_PATH, key, str(value))
+        return
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))

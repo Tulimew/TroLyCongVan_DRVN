@@ -1,6 +1,5 @@
 import os
 import re
-import threading
 import webbrowser
 import tempfile
 import subprocess
@@ -51,7 +50,7 @@ class IncomingViewMixin:
         # Tab phụ 2: Toàn bộ công văn đến cá nhân
         self.tab_inc_personal = QWidget()
         self.init_tab_incoming_personal()
-        self.tabs_incoming.addTab(self.tab_inc_personal, "👤 Toàn bộ công văn đến cá nhân")
+        self.tabs_incoming.addTab(self.tab_inc_personal, "👤 Cá nhân · Chờ và đã xử lý")
 
         # Tab phụ 3: Chi tiết thông tin & Tệp đính kèm
         self.tab_inc_detail = QWidget()
@@ -92,6 +91,7 @@ class IncomingViewMixin:
         filter_bar.addWidget(btn_7days)
         filter_bar.addWidget(btn_all)
         filter_bar.addWidget(btn_filter)
+        self.add_history_button(filter_bar, "incoming_department", self.dt_from_inc_dept, self.dt_to_inc_dept)
         filter_bar.addStretch()
 
         btn_view_det = QPushButton("📋 Xem chi tiết & File đã chọn")
@@ -142,6 +142,7 @@ class IncomingViewMixin:
         filter_bar.addWidget(btn_7days)
         filter_bar.addWidget(btn_all)
         filter_bar.addWidget(btn_filter)
+        self.add_history_button(filter_bar, "incoming_personal", self.dt_from_inc_pers, self.dt_to_inc_pers)
         filter_bar.addStretch()
 
         btn_view_det = QPushButton("📋 Xem chi tiết & File đã chọn")
@@ -414,28 +415,12 @@ class IncomingViewMixin:
         d_from = self.dt_from_inc_dept.date().toPyDate()
         d_to = self.dt_to_inc_dept.date().toPyDate()
         docs = db.get_incoming_docs_filtered(scope="department", from_date=d_from, to_date=d_to)
-        if not docs:
-            try:
-                self.status_bar.showMessage(f"Đang đồng bộ công văn đến của Phòng từ {d_from.strftime('%d/%m/%Y')} đến {d_to.strftime('%d/%m/%Y')}...")
-                self.crawler.fetch_incoming_docs_department(d_from, d_to)
-                docs = db.get_incoming_docs_filtered(scope="department", from_date=d_from, to_date=d_to)
-                self.status_bar.showMessage("Đã đồng bộ xong dữ liệu công văn đến của Phòng.")
-            except Exception:
-                pass
         self.render_incoming_table(self.table_inc_dept, docs, is_dept=True)
 
     def apply_incoming_filter_personal(self):
         d_from = self.dt_from_inc_pers.date().toPyDate()
         d_to = self.dt_to_inc_pers.date().toPyDate()
         docs = db.get_incoming_docs_filtered(scope="personal", from_date=d_from, to_date=d_to)
-        if not docs:
-            try:
-                self.status_bar.showMessage("Đang đồng bộ công văn đến cá nhân...")
-                self.crawler.fetch_incoming_docs_personal(d_from, d_to)
-                docs = db.get_incoming_docs_filtered(scope="personal", from_date=d_from, to_date=d_to)
-                self.status_bar.showMessage("Đã đồng bộ xong dữ liệu công văn đến cá nhân.")
-            except Exception:
-                pass
         self.render_incoming_table(self.table_inc_pers, docs, is_dept=False)
 
     def create_phan_loai_item(self, phan_loai_text):
@@ -611,13 +596,17 @@ class IncomingViewMixin:
         fetched_detail_from_web = False
 
         # Nếu trong DB chưa có danh sách tệp đầy đủ mà có link chi tiết, cào bổ sung ngay
-        if not attachments and doc.get("detail_url"):
+        if doc.get("detail_url") and (doc.get("is_read") == 0 or not attachments
+                                      or any(att.get("info") == "Tệp đính kèm chính" for att in attachments)):
             try:
                 self.status_bar.showMessage("Đang lấy danh sách toàn bộ tệp đính kèm và phân loại...")
-                attachments, pl_from_detail = self.crawler.fetch_doc_details_and_attachments(doc["detail_url"], doc.get("han_xu_ly", ""))
-                fetched_detail_from_web = True
-                if attachments and doc.get("id"):
-                    db.update_doc_attachments(doc["id"], attachments)
+                detail_attachments, pl_from_detail = self.detail_crawler.fetch_doc_details_and_attachments(
+                    doc["detail_url"], doc.get("han_xu_ly") or ""
+                )
+                fetched_detail_from_web = bool(pl_from_detail)
+                attachments = detail_attachments or attachments
+                if detail_attachments and doc.get("id"):
+                    db.update_doc_attachments(doc["id"], detail_attachments)
                 if pl_from_detail and doc.get("id"):
                     db.update_doc_phan_loai(doc["id"], pl_from_detail)
                     doc["phan_loai_xu_ly"] = pl_from_detail
@@ -669,16 +658,9 @@ class IncomingViewMixin:
 
         # Đồng bộ trạng thái đã đọc trong CSDL và trên cổng web DRVN
         if doc.get("is_read") == 0 and doc.get("id"):
-            db.mark_as_read(doc["id"])
-            doc["is_read"] = 1
-            if not fetched_detail_from_web and doc.get("detail_url"):
-                threading.Thread(
-                    target=self.crawler.mark_doc_read_on_web,
-                    args=(doc["detail_url"],),
-                    daemon=True,
-                ).start()
-            self.update_badges()
-            self.refresh_quick_alerts()
+            if fetched_detail_from_web:
+                doc["is_read"] = 1
+            self.complete_doc_read(doc["id"], fetched_detail_from_web)
 
     def open_detail_from_dept(self):
         row = self.table_inc_dept.currentRow()

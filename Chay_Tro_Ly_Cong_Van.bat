@@ -3,6 +3,11 @@ chcp 65001 >nul
 title Tro Ly Cong Van DRVN
 cd /d "%~dp0"
 
+if exist "%~dp0runtime\pythonw.exe" (
+    start "" "%~dp0runtime\pythonw.exe" "%~dp0main.py"
+    exit /b
+)
+
 where python >nul 2>nul
 if %errorlevel% neq 0 (
     where py >nul 2>nul
@@ -12,7 +17,7 @@ if %errorlevel% neq 0 (
     set "PY_CMD=python"
 )
 
-%PY_CMD% -c "import PyQt6, pymupdf, requests, bs4" >nul 2>nul
+%PY_CMD% -c "import PyQt6, pymupdf, requests, bs4, cryptography" >nul 2>nul
 if %errorlevel% neq 0 goto :need_install
 
 where pythonw >nul 2>nul

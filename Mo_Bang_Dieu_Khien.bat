@@ -5,6 +5,11 @@ cd /d "%~dp0"
 
 echo Dang khoi dong Bang dieu khien Cong van DRVN...
 
+if exist "%~dp0runtime\python.exe" (
+    "%~dp0runtime\python.exe" "%~dp0main.py"
+    goto :check_err
+)
+
 where python >nul 2>nul
 if %errorlevel% equ 0 (
     python main.py

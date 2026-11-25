@@ -1,26 +1,36 @@
 import requests
 import re
-import urllib3
 import json
 import os
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 from datetime import datetime
 from core import db
 from core import notifier
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BASE_URL = "https://congvan.drvn.gov.vn"
 LOGIN_URL = f"{BASE_URL}/login?returnurl=%2fdoc"
 
 URLS = {
     "incoming_personal": f"{BASE_URL}/doc/view/doc-progress",
+    "incoming_history": f"{BASE_URL}/doc/view/doc-send",
     "incoming_department": f"{BASE_URL}/doc/view/doc-provin",
     "outgoing_department": f"{BASE_URL}/doc/view/shipdoc-provin",
     "outgoing_personal": f"{BASE_URL}/doc/view/shipdoc-send",
     "outgoing_processing": f"{BASE_URL}/doc/view/shipdoc-progress"
 }
+
+
+class PortalSyncError(RuntimeError):
+    """The requested list could not be synchronized completely."""
+
+
+class _PortalSession(requests.Session):
+    def get_adapter(self, url):
+        if not url.lower().startswith("https://"):
+            raise requests.exceptions.InvalidURL("Cổng công văn yêu cầu HTTPS.")
+        return super().get_adapter(url)
+
 
 def parse_personnel(td_element):
     """Tách chuyên viên xử lý chính và chuyên viên phối hợp từ thẻ TD cột 7"""
@@ -45,8 +55,7 @@ def parse_personnel(td_element):
 
 class DRVNCrawler:
     def __init__(self):
-        self.session = requests.Session()
-        self.session.verify = False
+        self.session = _PortalSession()
         self.session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
             "Accept-Language": "vi,en-US;q=0.9,en;q=0.8",
@@ -87,6 +96,8 @@ class DRVNCrawler:
 
     def login(self, username, password):
         try:
+            self.session.cookies.clear()
+            self.is_logged_in = False
             r = self.session.get(LOGIN_URL, timeout=15)
             if r.status_code != 200:
                 self.last_error = f"Không thể kết nối máy chủ (Mã lỗi {r.status_code})"
@@ -117,9 +128,9 @@ class DRVNCrawler:
 
             cookies = self.session.cookies.get_dict()
             if r_post.status_code in (301, 302) or ".DOTNETNUKE" in cookies:
+                db.set_setting("session_cookies", json.dumps(cookies) if ".DOTNETNUKE" in cookies else "")
                 self.is_logged_in = True
                 self.last_login_time = datetime.now()
-                db.set_setting("session_cookies", json.dumps(cookies))
                 return True
 
             soup = BeautifulSoup(r_post.text, "html.parser")
@@ -142,8 +153,10 @@ class DRVNCrawler:
             try:
                 cookies = json.loads(cookies_json)
                 if ".DOTNETNUKE" in cookies:
-                    self.session.cookies.update(cookies)
+                    for name, value in cookies.items():
+                        self.session.cookies.set(name, value, domain="congvan.drvn.gov.vn", secure=True)
                     self.is_logged_in = True
+                    self.last_login_time = datetime.now()
                     return True
             except:
                 pass
@@ -152,11 +165,10 @@ class DRVNCrawler:
     def fetch_doc_details_and_attachments(self, detail_url, han_xu_ly=""):
         """Trích xuất toàn bộ danh sách tệp đính kèm và phân loại xử lý từ trang chi tiết của công văn"""
         try:
-            self.ensure_logged_in()
-            full_url = detail_url if detail_url.startswith("http") else urljoin(BASE_URL, detail_url)
-            r = self.session.get(full_url, timeout=20)
-            if r.status_code != 200 or "login" in r.url.lower():
+            full_url = urljoin(BASE_URL, detail_url)
+            if not re.search(r"/itemid/[^/]+", urlsplit(full_url).path, re.I):
                 return [], ""
+            r = self._portal_response(full_url)
 
             soup = BeautifulSoup(r.text, "html.parser")
             
@@ -208,13 +220,8 @@ class DRVNCrawler:
         """Gửi yêu cầu mở trang chi tiết lên cổng DRVN để hệ thống web ghi nhận đã đọc."""
         if not detail_url:
             return False
-        try:
-            self.ensure_logged_in()
-            full_url = detail_url if detail_url.startswith("http") else urljoin(BASE_URL, detail_url)
-            r = self.session.get(full_url, timeout=15)
-            return r.status_code == 200 and "login" not in r.url.lower()
-        except Exception:
-            return False
+        _, classification = self.fetch_doc_details_and_attachments(detail_url)
+        return bool(classification)
 
     def _extract_links(self, cell):
         """Trích xuất link download file và link xem nhanh"""
@@ -232,63 +239,141 @@ class DRVNCrawler:
                 view_url = href
         return download_url, view_url
 
-    def fetch_incoming_docs_personal(self, from_date=None, to_date=None):
-        """1. Công văn đến cá nhân (Chờ xử lý & hàng đợi phân công)"""
+    def _dated_url(self, feed, from_date, to_date):
+        year = datetime.now().year
+        start = from_date.strftime("%d-%m-%Y") if from_date else f"01-01-{year}"
+        end = to_date.strftime("%d-%m-%Y") if to_date else f"31-12-{year}"
+        if from_date and to_date and from_date > to_date:
+            raise PortalSyncError("Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.")
+        return f"{URLS[feed]}/from/{start}/to/{end}"
+
+    def _portal_response(self, url):
+        allowed = urlsplit(BASE_URL)
+        target = urlsplit(url)
+        if (target.scheme, target.netloc) != (allowed.scheme, allowed.netloc):
+            raise PortalSyncError("Đường dẫn không thuộc cổng công văn DRVN.")
+        if not self.ensure_logged_in():
+            raise PortalSyncError("Chưa xác thực được phiên đăng nhập DRVN.")
+        response = self.session.get(url, timeout=20)
+        if "/login" in urlsplit(response.url).path.lower() or response.status_code in (401, 403):
+            self.is_logged_in = False
+            if not self.ensure_logged_in(force=True):
+                raise PortalSyncError("Phiên đăng nhập DRVN đã hết hạn.")
+            response = self.session.get(url, timeout=20)
+        if response.status_code != 200:
+            raise PortalSyncError(f"Cổng DRVN trả HTTP {response.status_code}.")
+        expected, actual = urlsplit(url), urlsplit(response.url)
+        if (actual.scheme, actual.netloc, actual.path.rstrip("/").lower()) != (
+            expected.scheme, expected.netloc, expected.path.rstrip("/").lower()
+        ):
+            raise PortalSyncError("Cổng DRVN chuyển sang trang khác hoặc bỏ qua bộ lọc đã chọn.")
+        return response
+
+    def _list_pages(self, url, required, max_pages=None):
+        start_path = urlsplit(url).path.rstrip("/")
+        feed_path = start_path.split("/from/")[0]
+        page = 1
+        seen_rows = 0
+        seen_pages = set()
+        reported_total = None
+        while True:
+            response = self._portal_response(url)
+            soup = BeautifulSoup(response.text, "html.parser")
+            table = soup.find("table", id=re.compile("grdData", re.I))
+            if table is None:
+                raise PortalSyncError(f"Không tìm thấy bảng công văn ở trang {page}.")
+            rows = [row for row in table.find_all("tr") if row.find_parent("table") is table]
+            if not rows:
+                raise PortalSyncError(f"Bảng công văn thiếu tiêu đề ở trang {page}.")
+            labels = [" ".join(cell.get_text(" ", strip=True).split()).casefold()
+                      for cell in rows[0].find_all(["th", "td"], recursive=False)]
+            columns = {label: index for index, label in enumerate(labels)}
+            if not required.issubset(columns):
+                raise PortalSyncError(f"Cấu trúc bảng công văn đã thay đổi ở trang {page}.")
+            records = [row for row in rows[1:]
+                       if len(row.find_all("td", recursive=False)) == len(labels)]
+            if reported_total is None:
+                for heading in soup.find_all(["h1", "h2", "h3", "h4"]):
+                    match = re.search(r"Danh sách công văn.+?\(([\d., ]+)\)", heading.get_text(" ", strip=True), re.I)
+                    if match:
+                        reported_total = int(re.sub(r"\D", "", match.group(1)))
+                        break
+            if (page > 1 or reported_total) and not records:
+                raise PortalSyncError(f"Trang {page} trống nhưng cổng vẫn báo có dữ liệu.")
+            if records:
+                page_key = tuple(row.get_text(" ", strip=True) for row in records)
+                if page_key in seen_pages:
+                    raise PortalSyncError(f"Cổng DRVN trả dữ liệu trùng nguyên trang ở trang {page}.")
+                seen_pages.add(page_key)
+            seen_rows += len(records)
+            yield columns, records
+            if on_page := getattr(self, "on_list_page", None):
+                on_page(page, seen_rows)
+            if max_pages is not None and page >= max_pages:
+                return
+
+            next_urls = set()
+            higher_page = False
+            for link in soup.select("a[href]"):
+                target = urlsplit(urljoin(response.url, link["href"]))
+                match = re.fullmatch(r"(.+)/p/([1-9][0-9]*)/?", target.path)
+                if (target.scheme, target.netloc) != ("https", urlsplit(BASE_URL).netloc) or not match:
+                    continue
+                prefix, number = match.group(1), int(match.group(2))
+                if prefix.split("/from/")[0] != feed_path or (start_path != feed_path and prefix != start_path):
+                    continue
+                higher_page |= number > page
+                if number == page + 1:
+                    next_urls.add(target.geturl())
+            if len(next_urls) > 1:
+                raise PortalSyncError(f"Có nhiều liên kết khác nhau cho trang {page + 1}.")
+            if not next_urls:
+                if higher_page or (reported_total is not None and seen_rows < reported_total):
+                    raise PortalSyncError(f"Thiếu trang công văn sau trang {page} ({seen_rows}/{reported_total or '?'} mục).")
+                return
+            if not records:
+                raise PortalSyncError(f"Trang {page} trống nhưng cổng vẫn báo còn dữ liệu.")
+            url = next_urls.pop()
+            page += 1
+
+    def fetch_incoming_docs_personal(self):
         return self._fetch_incoming_table(URLS["incoming_personal"], scope="personal")
 
-    def fetch_incoming_docs_department(self, from_date=None, to_date=None):
-        """2. Công văn đến của toàn Phòng / Đơn vị (có hỗ trợ mốc thời gian lọc)"""
-        curr_year = datetime.now().year
-        f_str = from_date.strftime("%d-%m-%Y") if hasattr(from_date, "strftime") else (from_date or f"01-01-{curr_year}")
-        t_str = to_date.strftime("%d-%m-%Y") if hasattr(to_date, "strftime") else (to_date or f"31-12-{curr_year}")
+    def fetch_incoming_history(self, from_date, to_date):
+        return self._fetch_incoming_table(
+            self._dated_url("incoming_history", from_date, to_date), scope="personal",
+            history_range=(from_date.isoformat(), to_date.isoformat())
+        )
 
-        url_filtered = f"{BASE_URL}/doc/view/doc-provin/from/{f_str}/to/{t_str}"
-        docs = self._fetch_incoming_table(url_filtered, scope="department")
-        if not docs:
-            docs = self._fetch_incoming_table(URLS["incoming_department"], scope="department")
-        return docs
+    def fetch_incoming_docs_department(self, from_date=None, to_date=None, *, max_pages=None):
+        return self._fetch_incoming_table(
+            self._dated_url("incoming_department", from_date, to_date), scope="department", max_pages=max_pages
+        )
 
-    def _fetch_incoming_table(self, url, scope="personal", retry=True):
-        try:
-            self.ensure_logged_in()
-            r = self.session.get(url, timeout=20)
-            if "login" in r.url.lower() or r.status_code in (301, 302, 401, 403):
-                self.is_logged_in = False
-                if retry and self.ensure_logged_in(force=True):
-                    return self._fetch_incoming_table(url, scope=scope, retry=False)
-                return []
-
-            soup = BeautifulSoup(r.text, "html.parser")
-            table = soup.find('table', {'id': lambda x: x and 'grdData' in x}) or soup.find('table')
-            if not table:
-                return []
-
-            rows = table.find_all("tr")
-            parsed_docs = []
-
+    def _fetch_incoming_table(self, url, scope="personal", *, history_range=None, max_pages=None):
+        processed = history_range is not None
+        parsed_docs = []
+        required = {"số đến", "số/ký hiệu", "trích yếu", "hạn xử lý", "xem"}
+        for columns, rows in self._list_pages(url, required, max_pages):
+            page_docs = []
             for row in rows:
-                tds = row.find_all("td")
-                if len(tds) < 5:
-                    continue
+                tds = row.find_all("td", recursive=False)
 
-                so_den = tds[0].get_text(strip=True) if len(tds) > 0 else ""
-                so_ky_hieu = tds[1].get_text(separator=' ', strip=True) if len(tds) > 1 else ""
-                ngay_ban_hanh = tds[2].get_text(strip=True) if len(tds) > 2 else ""
-                trich_yeu = tds[3].get_text(separator=' ', strip=True) if len(tds) > 3 else ""
+                def value(label):
+                    return tds[columns[label]].get_text(" ", strip=True) if label in columns else ""
 
-                # Bỏ qua dòng tiêu đề bảng hoặc dòng phân trang, dòng trống
+                so_den = value("số đến")
+                so_ky_hieu = value("số/ký hiệu")
+                ngay_ban_hanh = value("ngày ban hành")
+                trich_yeu = value("trích yếu")
                 if not so_ky_hieu and not trich_yeu:
-                    continue
-                if "số/ký hiệu" in so_ky_hieu.lower() or "trích yếu" in trich_yeu.lower():
-                    continue
-
-                ngay_den = tds[4].get_text(strip=True) if len(tds) > 4 else ""
-                han_xu_ly = tds[5].get_text(strip=True) if len(tds) > 5 else ""
-                chi_dao = tds[6].get_text(separator=' ', strip=True) if len(tds) > 6 else ""
-                
-                # Tách riêng chuyên viên xử lý chính và chuyên viên phối hợp
-                xu_ly_chinh, phoi_hop = parse_personnel(tds[7]) if len(tds) > 7 else ("", "")
-                thoi_han = tds[8].get_text(strip=True) if len(tds) > 8 else ""
+                    raise PortalSyncError("Có dòng công văn đến thiếu số ký hiệu và trích yếu.")
+                ngay_den = value("ngày đến")
+                han_xu_ly = value("hạn xử lý")
+                chi_dao = value("chỉ đạo giải quyết")
+                xu_ly_chinh, phoi_hop = (parse_personnel(tds[columns["xử lý chính"]])
+                                         if "xử lý chính" in columns else ("", ""))
+                thoi_han = value("thời hạn")
 
                 # Tìm link trang chi tiết của công văn
                 detail_url = ""
@@ -313,23 +398,11 @@ class DRVNCrawler:
 
                 # Trích xuất liên kết tệp đính kèm trực tiếp từ dòng bảng
                 # KHÔNG tự ý gửi GET detail_url vì cổng DRVN sẽ tự động chuyển văn bản 'Nhận để biết và lưu' sang 'Đã xử lý'
-                download_url, view_url = self._extract_links(tds[-1])
+                download_url, view_url = self._extract_links(tds[columns["xem"]])
                 if not download_url:
-                    d2, v2 = self._extract_links(tds[3])
+                    d2, v2 = self._extract_links(tds[columns["trích yếu"]])
                     download_url = download_url or d2
                     view_url = view_url or v2
-
-                attachments = db.get_doc_attachments_by_id(doc_id)
-                if not attachments and (download_url or view_url):
-                    fname = f"{so_ky_hieu or 'VanBan'}.pdf"
-                    attachments = [{
-                        "name": fname,
-                        "download_url": download_url,
-                        "view_url": view_url,
-                        "info": "Tệp đính kèm chính"
-                    }]
-                elif not attachments:
-                    attachments = []
 
                 doc = {
                     "id": doc_id,
@@ -345,184 +418,124 @@ class DRVNCrawler:
                     "thoi_han": thoi_han,
                     "phan_loai_xu_ly": phan_loai_xu_ly,
                     "scope": scope,
+                    "is_processed": processed,
+                    "history_range": history_range,
                     "download_url": download_url,
                     "view_url": view_url,
-                    "detail_url": detail_url,
-                    "attachments": attachments
+                    "detail_url": detail_url
                 }
 
-                is_new = db.upsert_incoming_doc(doc)
-                if is_new and scope == "personal":
-                    notifier.play_alert_chime()
-                    so_den_txt = doc['so_den'] if doc['so_den'] else "Văn bản nội bộ"
-                    msg = f"🔔 *CÓ CÔNG VĂN ĐẾN MỚI ĐƯỢC GIAO!*\n\n" \
-                          f"📌 *Số đến:* `{so_den_txt}`\n" \
-                          f"🏷️ *Phân loại:* {doc['phan_loai_xu_ly']}\n" \
-                          f"📋 *Số/Ký hiệu:* {doc['so_ky_hieu']}\n" \
-                          f"📅 *Ngày đến:* {doc['ngay_den'] or doc['ngay_ban_hanh']}\n" \
-                          f"📝 *Trích yếu:* {doc['trich_yeu']}\n" \
-                          f"👤 *Xử lý chính:* {doc['xu_ly_chinh']}\n"
-                    if doc.get("phoi_hop"):
-                        msg += f"👥 *Phối hợp:* {doc['phoi_hop']}\n"
-                    msg += f"⏳ *Hạn xử lý:* {doc['han_xu_ly'] or 'Không ghi hạn'}\n\n" \
-                           f"🔗 [Mở Hệ Thống DRVN]({url})"
-                    notifier.send_telegram_alert(msg)
-                    if hasattr(self, "on_new_personal_doc") and callable(self.on_new_personal_doc):
-                        self.on_new_personal_doc(doc)
+                page_docs.append(doc)
+            if scope == "department" or processed:
+                db.save_incoming_docs(page_docs)
+            parsed_docs.extend(page_docs)
 
-                parsed_docs.append(doc)
+        if scope == "personal" and not processed:
+            for doc in db.save_incoming_docs(parsed_docs, replace_pending=True):
+                notifier.play_alert_chime()
+                so_den_txt = doc['so_den'] if doc['so_den'] else "Văn bản nội bộ"
+                msg = f"🔔 *CÓ CÔNG VĂN ĐẾN MỚI ĐƯỢC GIAO!*\n\n" \
+                      f"📌 *Số đến:* `{so_den_txt}`\n" \
+                      f"🏷️ *Phân loại:* {doc['phan_loai_xu_ly']}\n" \
+                      f"📋 *Số/Ký hiệu:* {doc['so_ky_hieu']}\n" \
+                      f"📅 *Ngày đến:* {doc['ngay_den'] or doc['ngay_ban_hanh']}\n" \
+                      f"📝 *Trích yếu:* {doc['trich_yeu']}\n" \
+                      f"👤 *Xử lý chính:* {doc['xu_ly_chinh']}\n"
+                if doc.get("phoi_hop"):
+                    msg += f"👥 *Phối hợp:* {doc['phoi_hop']}\n"
+                msg += f"⏳ *Hạn xử lý:* {doc['han_xu_ly'] or 'Không ghi hạn'}\n\n" \
+                       f"🔗 [Mở Hệ Thống DRVN]({url})"
+                notifier.send_telegram_alert(msg)
+                if hasattr(self, "on_new_personal_doc") and callable(self.on_new_personal_doc):
+                    self.on_new_personal_doc(doc)
+        return parsed_docs
 
-            return parsed_docs
-        except Exception as e:
-            self.last_error = f"Lỗi lấy công văn đến: {str(e)}"
-            return []
+    def fetch_outgoing_docs_department(self, from_date=None, to_date=None, *, max_pages=None):
+        return self._fetch_outgoing_table(
+            self._dated_url("outgoing_department", from_date, to_date), scope="department", max_pages=max_pages
+        )
 
-    def fetch_outgoing_docs_department(self, from_date=None, to_date=None):
-        """1. Toàn bộ công văn đi của Phòng (có hỗ trợ mốc thời gian lọc)"""
-        curr_year = datetime.now().year
-        f_str = from_date.strftime("%d-%m-%Y") if hasattr(from_date, "strftime") else (from_date or f"01-01-{curr_year}")
-        t_str = to_date.strftime("%d-%m-%Y") if hasattr(to_date, "strftime") else (to_date or f"31-12-{curr_year}")
-
-        url_filtered = f"{BASE_URL}/doc/view/shipdoc-provin/from/{f_str}/to/{t_str}"
-        docs = self._fetch_outgoing_table(url_filtered, scope="department")
-        if not docs:
-            docs = self._fetch_outgoing_table(URLS["outgoing_department"], scope="department")
-        return docs
-
-    def fetch_outgoing_docs_personal(self, from_date=None, to_date=None):
-        """2. Công văn đi cá nhân (tự động tra cứu theo tên cán bộ và khoảng thời gian)"""
-        import urllib.parse
-        all_docs = []
-        officer = db.get_officer_name()
-        curr_year = datetime.now().year
-
-        f_str = from_date.strftime("%d-%m-%Y") if hasattr(from_date, "strftime") else (from_date or f"01-01-{curr_year - 1}")
-        t_str = to_date.strftime("%d-%m-%Y") if hasattr(to_date, "strftime") else (to_date or f"31-12-{curr_year + 1}")
-
-        if officer:
-            enc = urllib.parse.quote(officer)
-            url_filter = f"{BASE_URL}/doc/view/shipdoc-send/from/{f_str}/to/{t_str}/sendname/{enc}"
-            docs_filtered = self._fetch_outgoing_table(url_filter, scope="personal")
-            all_docs.extend(docs_filtered)
-
-        # Quét thêm danh sách mặc định để lấy các văn bản dự thảo / chờ xử lý mới nhất
-        docs_default = self._fetch_outgoing_table(URLS["outgoing_personal"], scope="personal")
-        all_docs.extend(docs_default)
-        return all_docs
+    def fetch_outgoing_docs_personal(self, from_date=None, to_date=None, *, max_pages=None):
+        url = (self._dated_url("outgoing_personal", from_date, to_date)
+               if from_date or to_date else URLS["outgoing_personal"])
+        return self._fetch_outgoing_table(url, scope="personal", max_pages=max_pages)
 
     def fetch_outgoing_docs_processing(self):
-        """3. Công văn đi đang xử lý (trạng thái)"""
-        return self._fetch_outgoing_table(URLS["outgoing_processing"], scope="processing")
+        docs = self._fetch_outgoing_table(URLS["outgoing_processing"], scope="processing")
+        db.replace_outgoing_processing(docs)
+        return docs
 
-    def _fetch_outgoing_table(self, url, scope="department", retry=True):
-        try:
-            self.ensure_logged_in()
-            r = self.session.get(url, timeout=20)
-            if "login" in r.url.lower() or r.status_code in (301, 302, 401, 403):
-                self.is_logged_in = False
-                if retry and self.ensure_logged_in(force=True):
-                    return self._fetch_outgoing_table(url, scope=scope, retry=False)
-                return []
-
-            soup = BeautifulSoup(r.text, "html.parser")
-            table = soup.find('table', {'id': lambda x: x and 'grdData' in x}) or soup.find('table')
-            if not table:
-                return []
-
-            rows = table.find_all("tr")
-            parsed_docs = []
-
+    def _fetch_outgoing_table(self, url, scope="department", *, max_pages=None):
+        parsed_docs = []
+        required = {"số trình ký", "số đi", "ngày ban hành", "trích yếu", "người ký",
+                    "đơn vị / người soạn thảo", "cv đến trả lời", "xem"}
+        officer_name = db.get_officer_name() if max_pages else ""
+        for columns, rows in self._list_pages(url, required, max_pages):
+            page_docs = []
             for row in rows:
-                tds = row.find_all("td")
-                if len(tds) < 4:
-                    continue
+                tds = row.find_all("td", recursive=False)
 
-                so_trinh_ky = tds[0].get_text(strip=True) if len(tds) > 0 else ""
-                so_di = tds[1].get_text(strip=True) if len(tds) > 1 else ""
-                ngay_ban_hanh = tds[2].get_text(strip=True) if len(tds) > 2 else ""
-                trich_yeu = tds[3].get_text(separator=' ', strip=True) if len(tds) > 3 else ""
-                nguoi_ky = tds[4].get_text(strip=True) if len(tds) > 4 else ""
-                soan_thao = tds[5].get_text(separator=' ', strip=True) if len(tds) > 5 else ""
-                cv_tra_loi = tds[6].get_text(strip=True) if len(tds) > 6 else ""
+                def value(label):
+                    return tds[columns[label]].get_text(" ", strip=True)
 
-                # Bỏ qua dòng tiêu đề bảng
-                if "số trình ký" in so_trinh_ky.lower() or "trích yếu" in trich_yeu.lower():
-                    continue
-
-                # Loại trừ các văn bản rác / giả lập dạng "Công văn đi không phải trả lời cho công văn đến"
+                so_trinh_ky = value("số trình ký")
+                so_di = value("số đi")
+                ngay_ban_hanh = value("ngày ban hành")
+                trich_yeu = value("trích yếu")
+                nguoi_ky = value("người ký")
+                soan_thao = value("đơn vị / người soạn thảo")
+                cv_tra_loi = value("cv đến trả lời")
+                if not so_trinh_ky and not so_di and not trich_yeu:
+                    raise PortalSyncError("Có dòng công văn đi thiếu thông tin định danh.")
                 if "không phải trả lời cho công văn đến" in trich_yeu.lower():
                     continue
 
-                # Trích xuất itemid từ các link trong hàng
-                itemid = ""
-                for a in row.find_all("a"):
-                    h = a.get("href", "")
-                    m = re.search(r'/itemid/([a-zA-Z0-9\-]+)', h)
-                    if m:
-                        itemid = m.group(1)
-                        break
-
+                itemid = next((match.group(1) for link in row.find_all("a", href=True)
+                               if (match := re.search(r"/itemid/([a-zA-Z0-9-]+)", link["href"]))), "")
                 doc_id = f"ship_{itemid}" if itemid else f"out_{so_trinh_ky}_{so_di}_{soan_thao}"
-
-                # Xác định trạng thái chính xác theo nguồn và dữ liệu
-                if so_di and so_di.strip():
+                if scope == "processing":
+                    trang_thai = "Chờ duyệt" if "chờ duyệt" in trich_yeu.lower() else "Chờ xử lý / Trình ký"
+                elif so_di:
                     trang_thai = "Đã ban hành"
-                elif "shipdoc-provin" in url:
-                    trang_thai = "Đã ban hành"
-                elif "shipdoc-progress" in url:
-                    trang_thai = "Chờ xử lý / Trình ký"
-                elif "shipdoc-send" in url:
-                    trang_thai = "Đã xử lý"
-                else:
-                    trang_thai = "Đang xử lý / Trình ký"
-
-                if "chờ duyệt" in trich_yeu.lower():
-                    trang_thai = "Chờ duyệt"
                 elif "đã ký" in nguoi_ky.lower():
                     trang_thai = "Đã ký số"
+                else:
+                    trang_thai = "Đã xử lý"
 
-                download_url, view_url = self._extract_links(tds[-1])
+                download_url, view_url = self._extract_links(tds[columns["xem"]])
                 if not download_url:
-                    d2, v2 = self._extract_links(tds[3])
+                    d2, v2 = self._extract_links(tds[columns["trích yếu"]])
                     download_url = download_url or d2
                     view_url = view_url or v2
-
                 doc = {
-                    "id": doc_id,
-                    "so_trinh_ky": so_trinh_ky,
-                    "so_di": so_di,
-                    "so_ky_hieu": so_di or so_trinh_ky,
-                    "trich_yeu": trich_yeu,
-                    "ngay_ban_hanh": ngay_ban_hanh,
-                    "ngay_tao": ngay_ban_hanh,
-                    "trang_thai": trang_thai,
-                    "nguoi_ky": nguoi_ky,
-                    "soan_thao": soan_thao,
-                    "cv_tra_loi": cv_tra_loi,
-                    "scope": scope,
-                    "download_url": download_url,
-                    "view_url": view_url
+                    "id": doc_id, "so_trinh_ky": so_trinh_ky, "so_di": so_di,
+                    "so_ky_hieu": so_di or so_trinh_ky, "trich_yeu": trich_yeu,
+                    "ngay_ban_hanh": ngay_ban_hanh, "ngay_tao": ngay_ban_hanh,
+                    "trang_thai": trang_thai, "nguoi_ky": nguoi_ky, "soan_thao": soan_thao,
+                    "cv_tra_loi": cv_tra_loi, "scope": scope,
+                    "download_url": download_url, "view_url": view_url,
                 }
-
-                has_up = db.upsert_outgoing_doc(doc)
-                officer_name = db.get_officer_name()
-                is_officer = (officer_name.lower() in soan_thao.lower()) if (officer_name and soan_thao) else False
-                if has_up and (scope == "personal" or is_officer):
+                page_docs.append(doc)
+            parsed_docs.extend(page_docs)
+            if scope == "processing":
+                continue
+            updates = db.save_outgoing_docs(page_docs)
+            if max_pages is None:
+                continue
+            for doc in updates:
+                is_officer = bool(officer_name and officer_name.casefold() in doc["soan_thao"].casefold())
+                if scope == "personal" or is_officer:
                     notifier.play_alert_chime()
-                    msg = f"📤 *CÔNG VĂN ĐI CÓ CẬP NHẬT TRẠNG THÁI!*\n\n" \
-                          f"📌 *Số đi / Trình ký:* `{doc['so_di'] or doc['so_trinh_ky']}`\n" \
-                          f"📝 *Trích yếu:* {doc['trich_yeu']}\n" \
-                          f"🚀 *Trạng thái mới:* *{doc['trang_thai']}*\n" \
-                          f"👤 *Người ký:* {doc['nguoi_ky']}"
-                    notifier.send_telegram_alert(msg)
-                    if hasattr(self, "on_outgoing_status_updated") and callable(self.on_outgoing_status_updated):
+                    notifier.send_telegram_alert(
+                        f"📤 *CÔNG VĂN ĐI CÓ CẬP NHẬT TRẠNG THÁI!*\n\n"
+                        f"📌 *Số đi / Trình ký:* {doc['so_di'] or doc['so_trinh_ky']}\n"
+                        f"📝 *Trích yếu:* {doc['trich_yeu']}\n"
+                        f"🚀 *Trạng thái mới:* {doc['trang_thai']}\n"
+                        f"👤 *Người ký:* {doc['nguoi_ky']}"
+                    )
+                    if hasattr(self, "on_outgoing_status_updated"):
                         self.on_outgoing_status_updated(doc)
-
-                parsed_docs.append(doc)
-
-            return parsed_docs
-        except Exception:
-            return []
+        return parsed_docs
 
     def download_file(self, file_url, target_path, retry=True):
         """Tải file đính kèm với phiên làm việc đã xác thực về máy"""

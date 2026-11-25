@@ -170,6 +170,7 @@ class ConfigViewMixin:
         self.spin_interval.setSuffix(" phút")
 
         self.txt_tg_token = QLineEdit(db.get_setting("telegram_token", ""))
+        self.txt_tg_token.setEchoMode(QLineEdit.EchoMode.Password)
         self.txt_tg_chatid = QLineEdit(db.get_setting("telegram_chat_id", ""))
 
         self.chk_enable_tg = QCheckBox("Gửi cảnh báo công văn mới về Telegram")
@@ -337,7 +338,7 @@ class ConfigViewMixin:
             startup_dir = os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs\Startup")
             lnk_path = os.path.join(startup_dir, "TroLyCongVan_DRVN.lnk")
             if enable:
-                app_dir = os.path.dirname(os.path.abspath(__file__))
+                app_dir = APP_DIR
                 bat_path = os.path.join(app_dir, "Chay_Tro_Ly_Cong_Van.bat")
                 ico_path = os.path.join(app_dir, "icon.ico")
                 vbs_code = (
@@ -440,7 +441,9 @@ class ConfigViewMixin:
                     QMessageBox.warning(self, "Thông báo", "Bản cập nhật này chưa kèm link tải file tự động. Vui lòng liên hệ quản trị viên.")
                     return
                 self.status_bar.showMessage("Đang tải và tiến hành nâng cấp...")
-                ok, up_msg = updater.download_and_install_update(d_url)
+                ok, up_msg = updater.download_and_install_update(
+                    d_url, res["remote_version"], res.get("package_signature", "")
+                )
                 if ok:
                     QMessageBox.information(self, "Cập nhật hoàn tất", "✅ Nâng cấp thành công! Ứng dụng sẽ khởi động lại ngay bây giờ.")
                     updater.restart_app()
