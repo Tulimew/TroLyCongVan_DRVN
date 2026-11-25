@@ -72,5 +72,30 @@ class TestDatabase(unittest.TestCase):
         ids = [d["id"] for d in docs]
         self.assertIn("test_unit_001", ids)
 
+    def test_upsert_outgoing_no_status_downgrade(self):
+        doc_done = {
+            "id": "out_test_145",
+            "so_trinh_ky": "145",
+            "so_di": "30254",
+            "trich_yeu": "Thử nghiệm công văn đi",
+            "trang_thai": "Đã xử lý",
+            "soan_thao": "Phòng Quản lý vận tải",
+            "scope": "personal",
+        }
+        db.upsert_outgoing_doc(doc_done)
+
+        # Quét lại từ trang processing với trạng thái "Chờ xử lý / Trình ký"
+        doc_proc = {
+            "id": "out_test_145",
+            "so_trinh_ky": "145",
+            "so_di": "",
+            "trich_yeu": "Thử nghiệm công văn đi",
+            "trang_thai": "Chờ xử lý / Trình ký",
+            "soan_thao": "Phòng Quản lý vận tải",
+            "scope": "processing",
+        }
+        has_update = db.upsert_outgoing_doc(doc_proc)
+        self.assertFalse(has_update)
+
 if __name__ == "__main__":
     unittest.main()

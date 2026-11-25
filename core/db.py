@@ -416,17 +416,25 @@ def upsert_outgoing_doc(doc):
         conn.close()
         return False
 
-    cursor.execute("SELECT id, trang_thai FROM outgoing_docs WHERE id = ?", (doc_id,))
+    cursor.execute("SELECT id, trang_thai, so_di FROM outgoing_docs WHERE id = ?", (doc_id,))
     row = cursor.fetchone()
     if not row and so_trinh_ky and trich_yeu:
-        cursor.execute("SELECT id, trang_thai FROM outgoing_docs WHERE so_trinh_ky = ? AND trich_yeu = ?", (so_trinh_ky, trich_yeu))
+        cursor.execute("SELECT id, trang_thai, so_di FROM outgoing_docs WHERE so_trinh_ky = ? AND trich_yeu = ?", (so_trinh_ky, trich_yeu))
         row = cursor.fetchone()
 
     has_update = 0
     if row:
         target_id = row["id"]
-        old_status = row["trang_thai"]
-        if old_status != new_status:
+        old_status = (row["trang_thai"] or "").strip()
+        old_so_di = (row["so_di"] or "").strip()
+
+        # Không hạ cấp trạng thái từ "Đã xử lý" (hoặc đã có Số đi) về "Chờ xử lý / Trình ký"
+        # để tránh lật trạng thái qua lại gây thông báo lặp vô tận giữa shipdoc-send và shipdoc-progress
+        effective_status = new_status
+        if (old_status == "Đã xử lý" or old_so_di) and new_status == "Chờ xử lý / Trình ký":
+            effective_status = old_status
+
+        if old_status != effective_status:
             has_update = 1
 
         cursor.execute("""
@@ -446,7 +454,7 @@ def upsert_outgoing_doc(doc):
             doc.get("ngay_ban_hanh", ""), doc.get("ngay_ban_hanh", ""),
             soan_thao, soan_thao,
             doc.get("cv_tra_loi", ""), doc.get("cv_tra_loi", ""),
-            new_status, has_update,
+            effective_status, has_update,
             doc.get("download_url", ""), doc.get("download_url", ""),
             doc.get("view_url", ""), doc.get("view_url", ""),
             target_id
