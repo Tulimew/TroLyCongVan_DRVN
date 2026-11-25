@@ -1,5 +1,6 @@
 import os
 import re
+import threading
 import webbrowser
 import tempfile
 import subprocess
@@ -267,6 +268,12 @@ class DashboardViewMixin:
             doc = self.get_doc_from_table_row(self.table_quick_new, row)
             if doc:
                 db.mark_as_read(doc["id"])
+                if doc.get("detail_url"):
+                    threading.Thread(
+                        target=self.crawler.mark_doc_read_on_web,
+                        args=(doc["detail_url"],),
+                        daemon=True,
+                    ).start()
                 self.refresh_all_data()
 
     def open_detail_from_quick_new(self):

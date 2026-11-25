@@ -1,5 +1,6 @@
 import os
 import re
+import threading
 import webbrowser
 import tempfile
 import subprocess
@@ -607,12 +608,14 @@ class IncomingViewMixin:
 
         # 1. Trích xuất tất cả các tệp đính kèm thực tế
         attachments = db.get_doc_attachments_raw(doc)
+        fetched_detail_from_web = False
 
         # Nếu trong DB chưa có danh sách tệp đầy đủ mà có link chi tiết, cào bổ sung ngay
         if not attachments and doc.get("detail_url"):
             try:
                 self.status_bar.showMessage("Đang lấy danh sách toàn bộ tệp đính kèm và phân loại...")
                 attachments, pl_from_detail = self.crawler.fetch_doc_details_and_attachments(doc["detail_url"], doc.get("han_xu_ly", ""))
+                fetched_detail_from_web = True
                 if attachments and doc.get("id"):
                     db.update_doc_attachments(doc["id"], attachments)
                 if pl_from_detail and doc.get("id"):
@@ -663,6 +666,19 @@ class IncomingViewMixin:
         # Chuyển sang Tab Chi tiết
         self.sidebar.setCurrentRow(1)
         self.tabs_incoming.setCurrentIndex(2)
+
+        # Đồng bộ trạng thái đã đọc trong CSDL và trên cổng web DRVN
+        if doc.get("is_read") == 0 and doc.get("id"):
+            db.mark_as_read(doc["id"])
+            doc["is_read"] = 1
+            if not fetched_detail_from_web and doc.get("detail_url"):
+                threading.Thread(
+                    target=self.crawler.mark_doc_read_on_web,
+                    args=(doc["detail_url"],),
+                    daemon=True,
+                ).start()
+            self.update_badges()
+            self.refresh_quick_alerts()
 
     def open_detail_from_dept(self):
         row = self.table_inc_dept.currentRow()

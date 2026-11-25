@@ -204,6 +204,18 @@ class DRVNCrawler:
         att, _ = self.fetch_doc_details_and_attachments(detail_url)
         return att
 
+    def mark_doc_read_on_web(self, detail_url):
+        """Gửi yêu cầu mở trang chi tiết lên cổng DRVN để hệ thống web ghi nhận đã đọc."""
+        if not detail_url:
+            return False
+        try:
+            self.ensure_logged_in()
+            full_url = detail_url if detail_url.startswith("http") else urljoin(BASE_URL, detail_url)
+            r = self.session.get(full_url, timeout=15)
+            return r.status_code == 200 and "login" not in r.url.lower()
+        except Exception:
+            return False
+
     def _extract_links(self, cell):
         """Trích xuất link download file và link xem nhanh"""
         download_url = ""
