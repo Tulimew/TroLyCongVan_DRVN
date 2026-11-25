@@ -387,6 +387,17 @@ class TasksViewMixin:
 
             # 1. Bảng phân bổ nhiệm vụ theo đơn vị / phòng ban
             dept_rows = db.get_tasks_by_department()
+            current_dept = self.cbo_task_dept.currentText()
+            dept_names = sorted([str(d.get("department", "")).strip() for d in dept_rows if d.get("department")])
+            self.cbo_task_dept.blockSignals(True)
+            self.cbo_task_dept.clear()
+            self.cbo_task_dept.addItem("Tất cả đơn vị")
+            self.cbo_task_dept.addItems(dept_names)
+            idx_dept = self.cbo_task_dept.findText(current_dept)
+            if idx_dept >= 0:
+                self.cbo_task_dept.setCurrentIndex(idx_dept)
+            self.cbo_task_dept.blockSignals(False)
+
             self.table_tasks_by_dept.setRowCount(len(dept_rows))
             for row, d in enumerate(dept_rows):
                 item_d = QTableWidgetItem(str(d.get("department", "")))

@@ -667,6 +667,14 @@ def set_setting(key, value):
 # HỆ THỐNG THEO DÕI NHIỆM VỤ (nhiemvu.drvn.gov.vn)
 # =============================================================================
 
+def clear_sample_tasks():
+    """Xóa dữ liệu nhiệm vụ mẫu (NV-2026-xxx) khi đã đồng bộ được dữ liệu thật."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM drvn_tasks WHERE id LIKE 'NV-2026-%'")
+    conn.commit()
+    conn.close()
+
 def upsert_task(task):
     conn = get_connection()
     cursor = conn.cursor()
