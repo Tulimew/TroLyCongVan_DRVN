@@ -68,6 +68,42 @@ class CredentialTests(unittest.TestCase):
             with self.assertRaises(requests.exceptions.InvalidURL):
                 session.get_adapter("http://example.invalid")
 
+    @unittest.skipUnless(os.name == "nt", "Windows Credential Manager is required")
+    def test_native_credential_manager_round_trip(self):
+        key = "unittest_probe"
+        try:
+            windows_credentials.write(self.db_path, key, "Thông tin thử")
+        except OSError as error:
+            if error.winerror in (5, 1312):
+                self.skipTest("The current Windows logon cannot access Credential Manager")
+            raise
+        self.addCleanup(windows_credentials.write, self.db_path, key, "")
+        self.assertEqual(windows_credentials.read(self.db_path, key), "Thông tin thử")
+
+    def test_application_starts_with_protected_settings(self):
+        from PyQt6.QtWidgets import QApplication, QLabel
+        from ui.main_window import MainWindow
+
+        with (
+            patch.dict(os.environ, {"QT_QPA_PLATFORM": "offscreen"}),
+            patch.object(windows_credentials, "read", side_effect=lambda path, key, default: default),
+            patch.object(MainWindow, "start_background_scan"),
+        ):
+            application = QApplication.instance() or QApplication([])
+            window = MainWindow()
+            try:
+                window.show()
+                application.processEvents()
+                self.assertTrue(window.isVisible())
+                self.assertTrue(any(
+                    f"(v{updater.APP_VERSION})" in label.text()
+                    for label in window.findChildren(QLabel)
+                ))
+            finally:
+                window.timer.stop()
+                window.hide()
+                window.deleteLater()
+
 
 class UpdateTests(unittest.TestCase):
     def setUp(self):

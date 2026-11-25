@@ -65,7 +65,7 @@ class AdminViewMixin:
         self.lbl_adm_cur_ver = QLabel(f"v{updater.APP_VERSION}")
         self.lbl_adm_cur_ver.setStyleSheet("font-weight: bold; color: #0284c7; font-size: 13px;")
 
-        cur_tuple = updater.parse_version_tuple(updater.APP_VERSION)
+        cur_tuple = updater.parse_release_version(updater.APP_VERSION)
         next_ver_suggest = f"{cur_tuple[0]}.{cur_tuple[1]}.{cur_tuple[2] + 1}"
         self.txt_admin_new_ver = QLineEdit(next_ver_suggest)
         self.txt_admin_new_ver.setPlaceholderText("VD: 1.0.1")
