@@ -227,6 +227,37 @@ def update_version_manifest(download_url):
     return data
 
 
+def write_signed_release(signing_dir, manifest_path, metadata, files):
+    """Write a reproducible ZIP and a separate manifest for either release workflow."""
+    manifest_path = Path(manifest_path)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata = {key: value for key, value in metadata.items() if key != "package_signature"}
+    version = metadata["version"]
+    parse_release_version(version)
+    zip_path = manifest_path.with_name(f"TroLyCongVan_DRVN_v{version}.zip")
+    with tempfile.TemporaryDirectory(dir=manifest_path.parent) as temporary:
+        archive = Path(temporary) / zip_path.name
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as package:
+            entries = {"version.json": json.dumps(metadata, ensure_ascii=False, indent=2).encode("utf-8")}
+            for name, data in files:
+                if not is_managed_file(name) or name in entries:
+                    raise ValueError(f"Tệp phát hành không hợp lệ: {name}")
+                if name.endswith(".py"):
+                    compile(data, name, "exec")
+                entries[name] = data
+            if "main.py" not in entries:
+                raise ValueError("Gói phát hành thiếu main.py.")
+            for name, data in sorted(entries.items()):
+                info = zipfile.ZipInfo(name)
+                info.compress_type = zipfile.ZIP_DEFLATED
+                package.writestr(info, data)
+        signature = sign_package(signing_dir, archive)
+        verify_package(signing_dir, archive, signature)
+        archive.replace(zip_path)
+    _write_manifest(manifest_path, {**metadata, "package_signature": signature})
+    return zip_path, manifest_path
+
+
 def create_release_package(new_ver, changelog_list=None, download_url=None):
     """Create an allowlisted ZIP and a separate manifest carrying its signature."""
     try:
@@ -234,7 +265,6 @@ def create_release_package(new_ver, changelog_list=None, download_url=None):
         parse_release_version(version)
         source_dir = Path(APP_DIR)
         manifest = release_manifest_path()
-        manifest.parent.mkdir(parents=True, exist_ok=True)
         installed = json.loads((source_dir / "version.json").read_text(encoding="utf-8"))
         installed.update({
             "version": version,
@@ -242,27 +272,17 @@ def create_release_package(new_ver, changelog_list=None, download_url=None):
             "changelog": changelog_list or installed.get("changelog", []),
             "download_url": normalize_download_url(download_url),
         })
-        installed.pop("package_signature", None)
-        zip_name = f"TroLyCongVan_DRVN_v{version}.zip"
-        zip_path = manifest.with_name(zip_name)
         files = list(source_dir.iterdir())
         for directory in ("core", "ui"):
             files.extend((source_dir / directory).rglob("*.py"))
-        with tempfile.TemporaryDirectory(dir=manifest.parent) as temporary:
-            archive = Path(temporary) / zip_name
-            with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as package:
-                package.writestr("version.json", json.dumps(installed, ensure_ascii=False, indent=2))
-                for path in sorted(files):
-                    name = path.relative_to(source_dir).as_posix()
-                    if name != "version.json" and is_managed_file(name) and path.is_file() and not path.is_symlink():
-                        package.write(path, name)
-            signature = sign_package(source_dir, archive)
-            archive.replace(zip_path)
-        _write_manifest(manifest, {**installed, "package_signature": signature})
+        payload = ((name, path.read_bytes()) for path in files
+                   if (name := path.relative_to(source_dir).as_posix()) != "version.json"
+                   and is_managed_file(name) and path.is_file() and not path.is_symlink())
+        zip_path, manifest = write_signed_release(source_dir, manifest, installed, payload)
         return {
             "ok": True,
             "zip_path": str(zip_path),
-            "zip_name": zip_name,
+            "zip_name": zip_path.name,
             "manifest_path": str(manifest),
             "size_kb": zip_path.stat().st_size / 1024,
             "message": "Đã tạo ZIP và manifest có chữ ký.",
