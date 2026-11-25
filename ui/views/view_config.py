@@ -338,7 +338,7 @@ class ConfigViewMixin:
             startup_dir = os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs\Startup")
             lnk_path = os.path.join(startup_dir, "TroLyCongVan_DRVN.lnk")
             if enable:
-                app_dir = os.path.dirname(os.path.abspath(__file__))
+                app_dir = APP_DIR
                 bat_path = os.path.join(app_dir, "Chay_Tro_Ly_Cong_Van.bat")
                 ico_path = os.path.join(app_dir, "icon.ico")
                 vbs_code = (

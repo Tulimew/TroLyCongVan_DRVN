@@ -125,6 +125,15 @@ BƯỚC 5: THIẾT LẬP KHỞI ĐỘNG CÙNG WINDOWS (TÙY CHỌN)
 17. README.md                  : Tài liệu hướng dẫn định dạng Markdown.
 ================================================================================
 
+## Đồng bộ công văn theo khoảng ngày
+
+- **Quét dữ liệu ngay** cập nhật các hàng chờ và trang mới nhất của các danh sách công văn khác.
+- Trong tab công văn cá nhân hoặc đơn vị, chọn ngày rồi bấm **Đồng bộ khoảng ngày** để tải
+  toàn bộ các trang của danh sách đó. Với công văn đến cá nhân, lượt đồng bộ nhập mục
+  **Đã xử lý** và làm mới hàng chờ. **Lọc** chỉ áp dụng bộ lọc cho dữ liệu đã lưu.
+- Nếu mục lịch sử thiếu ngày trong danh sách web, ứng dụng dùng khoảng ngày mà cổng đã
+  trả mục đó. Hãy đồng bộ lại nếu cần tra cứu theo một khoảng hẹp hơn.
+
 ## HTTPS và thông tin đăng nhập trên Windows
 
 Ứng dụng xác minh chứng chỉ HTTPS khi kết nối cổng công văn. Nếu đơn vị dùng CA nội bộ,

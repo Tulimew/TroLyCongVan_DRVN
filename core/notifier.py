@@ -4,6 +4,8 @@ from core import db
 
 def play_alert_chime():
     """Phát âm thanh chuông báo trên Windows"""
+    if db.get_setting("enable_sound", "1") != "1":
+        return
     try:
         # Phát âm thanh chuẩn Windows Asterisk hoặc tự tạo beep
         winsound.MessageBeep(winsound.MB_ICONASTERISK)

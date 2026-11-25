@@ -147,6 +147,7 @@ class UpdateTests(unittest.TestCase):
     def test_unsigned_or_invalid_signature_leaves_installed_files_alone(self):
         with (
             patch.object(updater, "APP_DIR", str(self.app)),
+            patch.object(updater, "APP_VERSION", "1.1.1"),
             patch.object(updater, "_download_archive", side_effect=lambda response, path, progress:
                               path.write_bytes(self.archive.read_bytes())),
             patch.object(updater, "_UpdateSession"),
@@ -166,6 +167,7 @@ class UpdateTests(unittest.TestCase):
         signature = base64.b64encode(self.key.sign(message)).decode("ascii")
         with (
             patch.object(updater, "APP_DIR", str(self.app)),
+            patch.object(updater, "APP_VERSION", "1.1.1"),
             patch.object(updater, "_UpdateSession") as session,
             patch.object(updater, "_get_gdrive_confirm_token", return_value=None),
         ):

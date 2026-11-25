@@ -1,12 +1,12 @@
 {
-  "version": "1.1.1",
+  "version": "1.1.2",
   "name": "Trợ lý Quản lý và Theo dõi Công văn DRVN",
   "release_date": "2026-11-25",
-  "description": "Bản cập nhật bảo mật kết nối, thông tin đăng nhập và quy trình phát hành.",
+  "description": "Sửa hàng chờ công văn đi và bổ sung đồng bộ lịch sử có phân trang.",
   "changelog": [
-    "Xác minh chứng chỉ HTTPS khi kết nối cổng công văn.",
-    "Di chuyển thông tin xác thực từ SQLite sang Windows Credential Manager.",
-    "Xác minh chữ ký Ed25519 của gói cập nhật và khôi phục tệp cũ khi cài đặt lỗi."
+    "Hiển thị hàng chờ công văn đi theo danh sách trên cổng DRVN.",
+    "Đồng bộ đầy đủ các trang trong khoảng ngày và nhập lịch sử công văn cá nhân đã xử lý.",
+    "Báo lỗi đăng nhập, tải trang và đồng bộ chưa hoàn tất."
   ],
   "download_url": ""
 }
